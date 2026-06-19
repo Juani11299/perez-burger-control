@@ -597,31 +597,31 @@
           <div class="form-grid">
             <div class="form-group">
               <label>Nombre del Mes</label>
-              <input type="text" id="cfg-mes" placeholder="Ej: Abril" />
+              <input type="text" id="cfg-mes" placeholder="Ej: Abril" onchange="silentSaveConfig()" />
             </div>
             <div class="form-group">
               <label>Año</label>
-              <input type="number" id="cfg-anio" placeholder="Ej: 2026" />
+              <input type="number" id="cfg-anio" placeholder="Ej: 2026" onchange="silentSaveConfig()" />
             </div>
             <div class="form-group">
               <label>% Fondo Común</label>
-              <input type="number" id="cfg-pct-fc" step="0.1" placeholder="Ej: 10" />
+              <input type="number" id="cfg-pct-fc" step="0.1" placeholder="Ej: 10" onchange="silentSaveConfig()" />
             </div>
             <div class="form-group">
               <label>Nombre Socio 1</label>
-              <input type="text" id="cfg-s1-nombre" placeholder="Juan" />
+              <input type="text" id="cfg-s1-nombre" placeholder="Juan" onchange="silentSaveConfig()" />
             </div>
             <div class="form-group">
               <label>% Socio 1</label>
-              <input type="number" id="cfg-s1-pct" step="0.1" placeholder="60" />
+              <input type="number" id="cfg-s1-pct" step="0.1" placeholder="60" onchange="silentSaveConfig()" />
             </div>
             <div class="form-group">
               <label>Nombre Socio 2</label>
-              <input type="text" id="cfg-s2-nombre" placeholder="Emi" />
+              <input type="text" id="cfg-s2-nombre" placeholder="Emi" onchange="silentSaveConfig()" />
             </div>
             <div class="form-group">
               <label>% Socio 2</label>
-              <input type="number" id="cfg-s2-pct" step="0.1" placeholder="40" />
+              <input type="number" id="cfg-s2-pct" step="0.1" placeholder="40" onchange="silentSaveConfig()" />
             </div>
           </div>
           <div class="form-actions">
@@ -960,6 +960,35 @@ function saveData() {
   saveAutoBackup();
   showToast('✅ Datos guardados correctamente');
   renderAll();
+}
+
+// Guarda silenciosamente sin toast ni re-render (para auto-guardado en campos)
+function silentSave() {
+  syncAutoBalances();
+  localStorage.setItem(MAIN_KEY, JSON.stringify(data));
+}
+
+function silentSaveBalance() {
+  const el = document.getElementById('bal-sueldos');
+  if (el) data.balance.sueldos = parseFloat(el.value) || 0;
+  silentSave();
+}
+
+function silentSaveProducto(inp) {
+  const key = inp.id.replace('prod-', '');
+  if (key in data.productos) data.productos[key] = parseInt(inp.value) || 0;
+  silentSave();
+}
+
+function silentSaveConfig() {
+  data.config.mes           = document.getElementById('cfg-mes')?.value.trim()          || data.config.mes;
+  data.config.anio          = parseInt(document.getElementById('cfg-anio')?.value)      || data.config.anio;
+  data.config.pctFondoComun = parseFloat(document.getElementById('cfg-pct-fc')?.value)  || data.config.pctFondoComun;
+  data.config.socio1Nombre  = document.getElementById('cfg-s1-nombre')?.value.trim()    || data.config.socio1Nombre;
+  data.config.socio1Pct     = parseFloat(document.getElementById('cfg-s1-pct')?.value)  || data.config.socio1Pct;
+  data.config.socio2Nombre  = document.getElementById('cfg-s2-nombre')?.value.trim()    || data.config.socio2Nombre;
+  data.config.socio2Pct     = parseFloat(document.getElementById('cfg-s2-pct')?.value)  || data.config.socio2Pct;
+  silentSave();
 }
 
 function syncAutoBalances() {
@@ -1405,7 +1434,7 @@ function renderProductos() {
   document.getElementById('productos-form').innerHTML = PRODUCTOS_CONFIG.map(p => `
     <div class="form-group">
       <label>${p.label}</label>
-      <input type="number" id="prod-${p.key}" value="${data.productos[p.key] || 0}" min="0" />
+      <input type="number" id="prod-${p.key}" value="${data.productos[p.key] || 0}" min="0" onchange="silentSaveProducto(this)" />
     </div>`).join('');
   renderChartProductos();
 }
@@ -1529,7 +1558,7 @@ function renderBalance() {
     <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr))">
       <div class="form-group">
         <label>👤 Sueldos ($)</label>
-        <input type="number" id="bal-sueldos" value="${b.sueldos || 0}" min="0" />
+        <input type="number" id="bal-sueldos" value="${b.sueldos || 0}" min="0" onchange="silentSaveBalance()" />
       </div>
     </div>
     <div class="form-actions">

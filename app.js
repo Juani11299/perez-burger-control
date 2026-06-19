@@ -127,6 +127,35 @@ function saveData() {
   renderAll();
 }
 
+// Guarda silenciosamente sin toast ni re-render (para auto-guardado en campos)
+function silentSave() {
+  syncAutoBalances();
+  localStorage.setItem(MAIN_KEY, JSON.stringify(data));
+}
+
+function silentSaveBalance() {
+  const el = document.getElementById('bal-sueldos');
+  if (el) data.balance.sueldos = parseFloat(el.value) || 0;
+  silentSave();
+}
+
+function silentSaveProducto(inp) {
+  const key = inp.id.replace('prod-', '');
+  if (key in data.productos) data.productos[key] = parseInt(inp.value) || 0;
+  silentSave();
+}
+
+function silentSaveConfig() {
+  data.config.mes           = document.getElementById('cfg-mes')?.value.trim()          || data.config.mes;
+  data.config.anio          = parseInt(document.getElementById('cfg-anio')?.value)      || data.config.anio;
+  data.config.pctFondoComun = parseFloat(document.getElementById('cfg-pct-fc')?.value)  || data.config.pctFondoComun;
+  data.config.socio1Nombre  = document.getElementById('cfg-s1-nombre')?.value.trim()    || data.config.socio1Nombre;
+  data.config.socio1Pct     = parseFloat(document.getElementById('cfg-s1-pct')?.value)  || data.config.socio1Pct;
+  data.config.socio2Nombre  = document.getElementById('cfg-s2-nombre')?.value.trim()    || data.config.socio2Nombre;
+  data.config.socio2Pct     = parseFloat(document.getElementById('cfg-s2-pct')?.value)  || data.config.socio2Pct;
+  silentSave();
+}
+
 function syncAutoBalances() {
   // Sync ventas from daily sales array (always authoritative if entries exist)
   if (data.ventas.length > 0) {
@@ -570,7 +599,7 @@ function renderProductos() {
   document.getElementById('productos-form').innerHTML = PRODUCTOS_CONFIG.map(p => `
     <div class="form-group">
       <label>${p.label}</label>
-      <input type="number" id="prod-${p.key}" value="${data.productos[p.key] || 0}" min="0" />
+      <input type="number" id="prod-${p.key}" value="${data.productos[p.key] || 0}" min="0" onchange="silentSaveProducto(this)" />
     </div>`).join('');
   renderChartProductos();
 }
@@ -694,7 +723,7 @@ function renderBalance() {
     <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr))">
       <div class="form-group">
         <label>👤 Sueldos ($)</label>
-        <input type="number" id="bal-sueldos" value="${b.sueldos || 0}" min="0" />
+        <input type="number" id="bal-sueldos" value="${b.sueldos || 0}" min="0" onchange="silentSaveBalance()" />
       </div>
     </div>
     <div class="form-actions">
