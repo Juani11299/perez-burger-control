@@ -1171,49 +1171,65 @@ function renderDistribucion() {
 }
 
 function renderDistCalculo() {
-  const c      = data.config;
-  const neta   = calcGananciaNeta();
-  const fc     = calcFondoComun();
-  const egr    = calcTotalEgresos();
-  const dist   = calcGananciaDistribuir();
-  const j      = calcParteSocio('juan');
-  const e      = calcParteSocio('emi');
+  const c    = data.config;
+  const neta = calcGananciaNeta();
+  const fc   = calcFondoComun();
+  const egr  = calcTotalEgresos();
+  const dist = calcGananciaDistribuir();
+  const s1   = calcParteSocio('juan');
+  const s2   = calcParteSocio('emi');
+
+  const egrLine = egr > 0
+    ? `<div class="dist-flow-arrow"><span class="dist-flow-arrow-fc" style="color:#ef4444;border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.1)">− ${fmt(egr)} Egresos adicionales</span></div>`
+    : '';
 
   document.getElementById('dist-calculo').innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
-      <div>
-        <table>
-          <thead><tr><th>Concepto</th><th class="align-right">Monto</th></tr></thead>
-          <tbody>
-            <tr><td>💰 Ingresos del Mes</td><td class="align-right text-green fw-700">${fmt(data.balance.ventas)}</td></tr>
-            <tr><td>📦 Gastos Generales</td><td class="align-right text-red">${fmt(data.balance.compras)}</td></tr>
-            <tr><td>🧾 Gastos Fijos</td><td class="align-right text-red">${fmt(data.balance.gastosFijos)}</td></tr>
-            <tr><td>👤 Sueldos</td><td class="align-right text-red">${fmt(data.balance.sueldos)}</td></tr>
-            <tr class="total-row"><td>📊 Ganancia Neta</td><td class="align-right">${fmt(neta)}</td></tr>
-            <tr><td>🏦 Fondo Común (${c.pctFondoComun}%)</td><td class="align-right text-muted">- ${fmt(fc)}</td></tr>
-            <tr><td>💸 Egresos de Ganancias</td><td class="align-right text-red">- ${fmt(egr)}</td></tr>
-            <tr class="total-row"><td>🎯 A Distribuir</td><td class="align-right">${fmt(dist)}</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div>
-        <table>
-          <thead><tr><th>Socio</th><th>%</th><th class="align-right">Parte Bruta</th></tr></thead>
-          <tbody>
-            <tr><td><strong>${c.socio1Nombre}</strong></td><td>${c.socio1Pct}%</td><td class="align-right text-blue fw-700">${fmt(j)}</td></tr>
-            <tr><td><strong>${c.socio2Nombre}</strong></td><td>${c.socio2Pct}%</td><td class="align-right fw-700" style="color:#ec4899">${fmt(e)}</td></tr>
-          </tbody>
-        </table>
-        <div class="divider"></div>
-        <div class="progress-wrap">
-          <div class="progress-label"><span>${c.socio1Nombre}</span><span>${c.socio1Pct}%</span></div>
-          <div class="progress-bar"><div class="progress-fill" style="width:${c.socio1Pct}%;background:var(--blue)"></div></div>
+    <div class="dist-flow">
+
+      <!-- 1. Ganancia Neta -->
+      <div class="dist-flow-step neta">
+        <div>
+          <div class="dfs-label">📊 Ganancia Neta del Mes</div>
+          <div class="dfs-breakdown">
+            ${fmt(data.balance.ventas)} ingresos
+            − ${fmt(data.balance.compras)} gastos
+            − ${fmt(data.balance.gastosFijos)} fijos
+            − ${fmt(data.balance.sueldos)} sueldos
+          </div>
         </div>
-        <div class="progress-wrap">
-          <div class="progress-label"><span>${c.socio2Nombre}</span><span>${c.socio2Pct}%</span></div>
-          <div class="progress-bar"><div class="progress-fill" style="width:${c.socio2Pct}%;background:#ec4899"></div></div>
+        <div class="dfs-amount">${fmt(neta)}</div>
+      </div>
+
+      <!-- Flecha: Fondo Común -->
+      <div class="dist-flow-arrow">
+        <span class="dist-flow-arrow-fc">🏦 ${c.pctFondoComun}% → Fondo Común = ${fmt(fc)}</span>
+      </div>
+
+      ${egrLine}
+
+      <!-- 2. A Distribuir -->
+      <div class="dist-flow-step distribuir">
+        <div>
+          <div class="dfs-label">🎯 A Distribuir entre Socios</div>
+          <div class="dfs-breakdown">Después de Fondo Común${egr > 0 ? ' y egresos' : ''}</div>
+        </div>
+        <div class="dfs-amount">${fmt(dist)}</div>
+      </div>
+
+      <!-- 3. Socios -->
+      <div class="dist-partners-row">
+        <div class="dist-partner-card p1">
+          <div class="dpc-name">${esc(c.socio1Nombre)}</div>
+          <div class="dpc-pct">${c.socio1Pct}% del total</div>
+          <div class="dpc-amount">${fmt(s1)}</div>
+        </div>
+        <div class="dist-partner-card p2">
+          <div class="dpc-name">${esc(c.socio2Nombre)}</div>
+          <div class="dpc-pct">${c.socio2Pct}% del total</div>
+          <div class="dpc-amount">${fmt(s2)}</div>
         </div>
       </div>
+
     </div>`;
 }
 
@@ -1743,6 +1759,8 @@ function cerrarMes() {
 
   const savedConfig      = { ...data.config, mes: nextMes, anio: nextAnio };
   const savedGastosFijos = mantenerFijos ? JSON.parse(JSON.stringify(data.gastosFijosDetalle)) : [];
+  // Preservar empleados pero resetear días trabajados del mes
+  const savedSueldos = (data.sueldosDetalle || []).map(e => ({ ...e, diasTrabajados: 0 }));
 
   // Limpiar datos
   data = {
@@ -1761,6 +1779,7 @@ function cerrarMes() {
     gastosFijosDetalle: savedGastosFijos,
     gastosGenerales:   [],
     egresosGanancia:   [],
+    sueldosDetalle:    savedSueldos,
   };
 
   saveData();
