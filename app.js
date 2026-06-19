@@ -24,7 +24,7 @@ const CAT_COLORS = {
 };
 
 let currentGastosGFilter = 'Todos';
-let currentSection = 'dashboard';
+let currentSection = 'cierre';
 
 // ─────────────────────────────────────────────────────
 // 1. DATOS POR DEFECTO
@@ -76,6 +76,14 @@ const DEFAULT_DATA = {
   ],
   gastosGenerales:  [],
   egresosGanancia:  [],
+  sueldosDetalle: [
+    { nombre: 'Peter',           diasTrabajados: 0, pagoPorDia: 30000 },
+    { nombre: 'Nati',            diasTrabajados: 0, pagoPorDia: 30000 },
+    { nombre: 'Nati Encargada',  diasTrabajados: 0, pagoPorDia: 40000 },
+    { nombre: 'Limpieza',        diasTrabajados: 0, pagoPorDia: 20000 },
+    { nombre: 'Nano',            diasTrabajados: 0, pagoPorDia: 30000 },
+    { nombre: 'Lucia',           diasTrabajados: 0, pagoPorDia: 20000 },
+  ],
 };
 
 // ─────────────────────────────────────────────────────
@@ -91,6 +99,7 @@ function migrateData(d) {
   if (!d.gastosFijosDetalle)   d.gastosFijosDetalle  = [];
   if (!d.gastosGenerales)      d.gastosGenerales      = [];
   if (!d.egresosGanancia)      d.egresosGanancia      = [];
+  if (!d.sueldosDetalle)       d.sueldosDetalle       = [];
   if (!d.config.plataformas)   d.config.plataformas   = ['Efectivo','Mercado Pago 1','Mercado Pago 2'];
   if (!d.pagos)                d.pagos                = [];
 
@@ -98,6 +107,7 @@ function migrateData(d) {
     ...v,
     fecha: v.fecha || '',
     pagos: v.pagos || [],
+    productosDelDia: v.productosDelDia || null,
   }));
 
   const gfMigSum = d.gastosFijosDetalle.reduce((s, g) => s + g.monto, 0);
@@ -300,17 +310,20 @@ function silentSaveConfig() {
 }
 
 function syncAutoBalances() {
-  // Sync ventas from daily sales array (always authoritative if entries exist)
   if (data.ventas.length > 0) {
     data.balance.ventas = data.ventas.reduce((s, v) => s + v.monto, 0);
   }
-  // Only sync gastosFijos if detail panel has been used (sum > 0)
   const gfSum = data.gastosFijosDetalle.reduce((s, g) => s + g.monto, 0);
   if (gfSum > 0) data.balance.gastosFijos = gfSum;
-  // Only sync compras if gastosGenerales panel has entries
   if (data.gastosGenerales.length > 0) {
     data.balance.compras = data.gastosGenerales.reduce((s, g) => s + g.monto, 0);
   }
+  const sueldosCalc = calcTotalSueldos();
+  if (sueldosCalc > 0) data.balance.sueldos = sueldosCalc;
+}
+
+function calcTotalSueldos() {
+  return (data.sueldosDetalle || []).reduce((s, e) => s + (e.diasTrabajados || 0) * (e.pagoPorDia || 0), 0);
 }
 
 // ─────────────────────────────────────────────────────
@@ -329,11 +342,13 @@ function pct(a, b) {
 // 6. NAVEGACIÓN
 // ─────────────────────────────────────────────────────
 const SECTION_TITLES = {
+  cierre:       'Cierre del Día',
   dashboard:    'Dashboard',
-  ventas:       'Ventas por Día',
+  ventas:       'Historial de Ventas',
   productos:    'Productos Vendidos',
   gastosf:      'Gastos Fijos',
   gastosg:      'Gastos Generales',
+  sueldos:      'Sueldos',
   pagos:        'Formas de Pago',
   balance:      'Balance General',
   distribucion: 'Distribución de Ganancias',
@@ -373,11 +388,13 @@ function renderAll() {
 
 function renderSection(sec) {
   switch(sec) {
+    case 'cierre':       renderCierreDelDia(); break;
     case 'dashboard':    renderDashboard();    break;
     case 'ventas':       renderVentas();       break;
     case 'productos':    renderProductos();    break;
     case 'gastosf':      renderGastosFijos();  break;
     case 'gastosg':      renderGastosGenerales(); break;
+    case 'sueldos':      renderSueldos();      break;
     case 'pagos':        renderPagos();        break;
     case 'balance':      renderBalance();      break;
     case 'distribucion': renderDistribucion(); break;
@@ -2043,10 +2060,319 @@ function downloadAutoBackup(i) {
 }
 
 // ─────────────────────────────────────────────────────
-// 31. INIT
+// 31. CIERRE DEL DÍA
+// ─────────────────────────────────────────────────────
+function renderCierreDelDia() {
+  // Productos
+  const prodGrid = document.getElementById('cierre-productos-grid');
+  if (prodGrid) {
+    prodGrid.innerHTML = PRODUCTOS_CONFIG.map(p => `
+      <div class="form-group">
+        <label>${p.label}</label>
+        <input type="number" id="cierre-prod-${p.key}" value="0" min="0" placeholder="0"
+               style="font-size:18px;font-weight:700;text-align:center" />
+      </div>`).join('');
+  }
+  // Plataformas de cobro
+  const pagosGrid = document.getElementById('cierre-pagos-grid');
+  if (pagosGrid) {
+    pagosGrid.innerHTML = (data.config.plataformas || []).map((plat, i) => `
+      <div class="cierre-pago-row">
+        <span class="cierre-pago-label">${esc(plat)}</span>
+        <input type="number" id="cierre-pago-${i}" class="pago-row-input cierre-pago-input"
+               placeholder="$0" oninput="recalcCierreTotal()" />
+      </div>`).join('');
+  }
+  // Fecha y día por defecto
+  const fechaEl = document.getElementById('cierre-fecha');
+  if (fechaEl && !fechaEl.value) {
+    fechaEl.value = new Date().toISOString().split('T')[0];
+    autoFillDiaNombre();
+  }
+  recalcCierreTotal();
+  renderUltimosCierres();
+}
+
+function autoFillDiaNombre() {
+  const diaEl = document.getElementById('cierre-dia');
+  if (diaEl && !diaEl.value) {
+    const DIAS = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+    diaEl.value = DIAS[new Date().getDay()];
+  }
+}
+
+function recalcCierreTotal() {
+  const total = (data.config.plataformas || []).reduce((s, _, i) => {
+    const el = document.getElementById('cierre-pago-' + i);
+    return s + (parseFloat(el?.value) || 0);
+  }, 0);
+  const el = document.getElementById('cierre-total-display');
+  if (el) el.textContent = fmt(total);
+}
+
+function saveCierre() {
+  const dia   = document.getElementById('cierre-dia')?.value.trim();
+  const fecha = document.getElementById('cierre-fecha')?.value;
+  const editF = document.getElementById('cierre-edit-fecha')?.value;
+  if (!dia || !fecha) { showToast('❌ Completá el día y la fecha'); return; }
+
+  const pagos = (data.config.plataformas || []).map((plat, i) => ({
+    plataforma: plat,
+    monto: parseFloat(document.getElementById('cierre-pago-' + i)?.value) || 0,
+  }));
+  const monto = pagos.reduce((s, p) => s + p.monto, 0);
+
+  const productosDelDia = {};
+  PRODUCTOS_CONFIG.forEach(p => {
+    productosDelDia[p.key] = parseInt(document.getElementById('cierre-prod-' + p.key)?.value) || 0;
+  });
+  const burgers = productosDelDia.burgers || 0;
+  const entry = { dia, fecha, monto, burgers, pagos, productosDelDia };
+
+  const targetFecha = editF || fecha;
+  const existIdx    = data.ventas.findIndex(v => v.fecha === targetFecha);
+
+  if (existIdx >= 0) {
+    cierreSubtractProductos(data.ventas[existIdx]);
+    data.ventas[existIdx] = entry;
+  } else {
+    data.ventas.push(entry);
+  }
+  cierreAddProductos(productosDelDia);
+
+  data.balance.ventas = data.ventas.reduce((s, v) => s + v.monto, 0);
+  saveData();
+  resetCierreForm();
+  showToast('✅ Cierre del día guardado');
+}
+
+function cierreSubtractProductos(venta) {
+  if (venta.productosDelDia) {
+    PRODUCTOS_CONFIG.forEach(p => {
+      data.productos[p.key] = Math.max(0, (data.productos[p.key] || 0) - (venta.productosDelDia[p.key] || 0));
+    });
+  } else {
+    data.productos.burgers = Math.max(0, (data.productos.burgers || 0) - (venta.burgers || 0));
+  }
+}
+
+function cierreAddProductos(productosDelDia) {
+  PRODUCTOS_CONFIG.forEach(p => {
+    data.productos[p.key] = (data.productos[p.key] || 0) + (productosDelDia[p.key] || 0);
+  });
+}
+
+function editCierre(fecha) {
+  const v = data.ventas.find(v => v.fecha === fecha);
+  if (!v) return;
+  document.getElementById('cierre-edit-fecha').value = fecha;
+  document.getElementById('cierre-dia').value   = v.dia || '';
+  document.getElementById('cierre-fecha').value = v.fecha || '';
+
+  PRODUCTOS_CONFIG.forEach(p => {
+    const el = document.getElementById('cierre-prod-' + p.key);
+    if (el) el.value = (v.productosDelDia && v.productosDelDia[p.key] != null)
+      ? v.productosDelDia[p.key]
+      : (p.key === 'burgers' ? v.burgers || 0 : 0);
+  });
+  (data.config.plataformas || []).forEach((_, i) => {
+    const el = document.getElementById('cierre-pago-' + i);
+    if (el) el.value = v.pagos?.[i]?.monto || 0;
+  });
+  recalcCierreTotal();
+  const badge = document.getElementById('cierre-edit-badge');
+  const cancelBtn = document.getElementById('cierre-cancel-btn');
+  if (badge) badge.style.display = '';
+  if (cancelBtn) cancelBtn.style.display = '';
+  document.getElementById('s-cierre').scrollTop = 0;
+  document.getElementById('content').scrollTop  = 0;
+}
+
+function deleteCierre(fecha) {
+  if (!confirm('¿Eliminar el cierre del ' + formatDate(fecha) + '?')) return;
+  const idx = data.ventas.findIndex(v => v.fecha === fecha);
+  if (idx < 0) return;
+  cierreSubtractProductos(data.ventas[idx]);
+  data.ventas.splice(idx, 1);
+  data.balance.ventas = data.ventas.reduce((s, v) => s + v.monto, 0);
+  saveData();
+  renderCierreDelDia();
+}
+
+function resetCierreForm() {
+  document.getElementById('cierre-edit-fecha').value = '';
+  const DIAS = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+  const fechaEl = document.getElementById('cierre-fecha');
+  const diaEl   = document.getElementById('cierre-dia');
+  if (fechaEl) fechaEl.value = new Date().toISOString().split('T')[0];
+  if (diaEl)   diaEl.value   = DIAS[new Date().getDay()];
+  PRODUCTOS_CONFIG.forEach(p => {
+    const el = document.getElementById('cierre-prod-' + p.key);
+    if (el) el.value = 0;
+  });
+  (data.config.plataformas || []).forEach((_, i) => {
+    const el = document.getElementById('cierre-pago-' + i);
+    if (el) el.value = '';
+  });
+  recalcCierreTotal();
+  const badge     = document.getElementById('cierre-edit-badge');
+  const cancelBtn = document.getElementById('cierre-cancel-btn');
+  if (badge) badge.style.display = 'none';
+  if (cancelBtn) cancelBtn.style.display = 'none';
+  renderUltimosCierres();
+}
+
+function renderUltimosCierres() {
+  const el    = document.getElementById('cierre-ultimos');
+  const badge = document.getElementById('cierre-count-badge');
+  if (!el) return;
+  if (badge) badge.textContent = data.ventas.length + ' días';
+
+  if (!data.ventas.length) {
+    el.innerHTML = `<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">
+      No hay cierres registrados este mes.<br>¡Agregá el primero con el formulario!
+    </div>`;
+    return;
+  }
+
+  const sorted = [...data.ventas].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  const totalMes = data.ventas.reduce((s, v) => s + v.monto, 0);
+
+  el.innerHTML = sorted.map(v => {
+    const cobros = (v.pagos || []).filter(p => p.monto > 0)
+      .map(p => `<span>${esc(p.plataforma)}: <strong>${fmt(p.monto)}</strong></span>`)
+      .join(' &nbsp;·&nbsp; ') || '<span style="color:var(--muted)">Sin detalle de cobros</span>';
+
+    const prods = v.productosDelDia
+      ? PRODUCTOS_CONFIG.filter(p => (v.productosDelDia[p.key] || 0) > 0)
+          .map(p => `${p.label.split(' ')[0]} <strong>${v.productosDelDia[p.key]}</strong>`)
+          .join(' · ')
+      : `🍔 <strong>${v.burgers || 0}</strong> burgers`;
+
+    return `<div class="cierre-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div>
+          <span style="font-weight:700;font-size:15px">${esc(v.dia)}</span>
+          <span style="font-size:12px;color:var(--muted);margin-left:8px">${v.fecha ? formatDate(v.fecha) : ''}</span>
+          <span style="font-size:11px;color:var(--muted);margin-left:8px">${pct(v.monto, totalMes)}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:17px;font-weight:800;color:var(--green)">${fmt(v.monto)}</span>
+          <button class="btn btn-ghost btn-sm" onclick="editCierre('${v.fecha}')">✏️</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteCierre('${v.fecha}')">🗑️</button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:4px">${prods || ''}</div>
+      <div style="font-size:12px;color:var(--muted)">${cobros}</div>
+    </div>`;
+  }).join('');
+}
+
+// ─────────────────────────────────────────────────────
+// 32. SUELDOS
+// ─────────────────────────────────────────────────────
+function renderSueldos() {
+  const total = calcTotalSueldos();
+
+  document.getElementById('sueldos-kpis').innerHTML = `
+    <div class="kpi-card red">
+      <div class="kpi-icon">💸</div>
+      <div class="kpi-label">Total Sueldos del Mes</div>
+      <div class="kpi-value">${fmt(total)}</div>
+      <div class="kpi-sub">${(data.sueldosDetalle || []).length} empleados</div>
+    </div>
+    <div class="kpi-card amber">
+      <div class="kpi-icon">📅</div>
+      <div class="kpi-label">Total Días Pagados</div>
+      <div class="kpi-value">${(data.sueldosDetalle || []).reduce((s, e) => s + (e.diasTrabajados || 0), 0)}</div>
+      <div class="kpi-sub">este mes</div>
+    </div>`;
+
+  document.getElementById('sueldos-tbody').innerHTML = (data.sueldosDetalle || []).map((e, i) => {
+    const sub = (e.diasTrabajados || 0) * (e.pagoPorDia || 0);
+    return `<tr>
+      <td><strong>${esc(e.nombre)}</strong></td>
+      <td style="text-align:center">
+        <input type="number" class="inline-days" value="${e.diasTrabajados || 0}" min="0"
+               onchange="updateDiasTrabajados(${i}, this.value)" />
+      </td>
+      <td class="text-muted">${fmt(e.pagoPorDia)}</td>
+      <td class="text-amber fw-700" id="sueldos-sub-${i}">${fmt(sub)}</td>
+      <td>
+        <button class="btn btn-ghost btn-sm" onclick="editEmpleado(${i})">✏️</button>
+        <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deleteEmpleado(${i})">🗑️</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('sueldos-total').innerHTML = `
+    <td><strong>TOTAL</strong></td>
+    <td></td><td></td>
+    <td id="sueldos-total-val"><strong class="text-amber">${fmt(total)}</strong></td>
+    <td></td>`;
+}
+
+function updateDiasTrabajados(i, val) {
+  if (!data.sueldosDetalle[i]) return;
+  data.sueldosDetalle[i].diasTrabajados = parseInt(val) || 0;
+  const sub   = data.sueldosDetalle[i].diasTrabajados * data.sueldosDetalle[i].pagoPorDia;
+  const total = calcTotalSueldos();
+  data.balance.sueldos = total;
+  silentSave();
+  const subEl   = document.getElementById('sueldos-sub-' + i);
+  const totalEl = document.getElementById('sueldos-total-val');
+  if (subEl)   subEl.innerHTML   = `<strong class="text-amber">${fmt(sub)}</strong>`;
+  if (totalEl) totalEl.innerHTML = `<strong class="text-amber">${fmt(total)}</strong>`;
+  const kpiEl = document.querySelector('#sueldos-kpis .kpi-value');
+  if (kpiEl) kpiEl.textContent = fmt(total);
+}
+
+function openAddEmpleadoModal() {
+  document.getElementById('emp-edit-index').value = -1;
+  document.getElementById('emp-nombre').value     = '';
+  document.getElementById('emp-dias').value       = '0';
+  document.getElementById('emp-pago').value       = '30000';
+  openModal('modal-empleado');
+}
+
+function editEmpleado(i) {
+  const e = data.sueldosDetalle[i];
+  document.getElementById('emp-edit-index').value = i;
+  document.getElementById('emp-nombre').value     = e.nombre;
+  document.getElementById('emp-dias').value       = e.diasTrabajados || 0;
+  document.getElementById('emp-pago').value       = e.pagoPorDia;
+  openModal('modal-empleado');
+}
+
+function saveEmpleado() {
+  const idx    = parseInt(document.getElementById('emp-edit-index').value);
+  const nombre = document.getElementById('emp-nombre').value.trim();
+  const dias   = parseInt(document.getElementById('emp-dias').value)   || 0;
+  const pago   = parseFloat(document.getElementById('emp-pago').value) || 0;
+  if (!nombre) return;
+  const entry = { nombre, diasTrabajados: dias, pagoPorDia: pago };
+  if (idx >= 0) data.sueldosDetalle[idx] = entry;
+  else          data.sueldosDetalle.push(entry);
+  data.balance.sueldos = calcTotalSueldos();
+  closeModal('modal-empleado');
+  saveData();
+  renderSueldos();
+}
+
+function deleteEmpleado(i) {
+  if (!confirm('¿Eliminar a ' + data.sueldosDetalle[i]?.nombre + '?')) return;
+  data.sueldosDetalle.splice(i, 1);
+  data.balance.sueldos = calcTotalSueldos();
+  saveData();
+  renderSueldos();
+}
+
+// ─────────────────────────────────────────────────────
+// 33. INIT
 // ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  loadData();          // carga localStorage inmediatamente (no bloquea)
+  loadData();
   renderAll();
-  initCloudSync();     // sincroniza con la nube en background
+  renderCierreDelDia();  // render cierre en background (sección activa)
+  initCloudSync();
 });
