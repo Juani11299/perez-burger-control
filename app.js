@@ -121,16 +121,159 @@ function loadData() {
 
 function saveData() {
   syncAutoBalances();
+  data._updatedAt = Date.now();
   localStorage.setItem(MAIN_KEY, JSON.stringify(data));
   saveAutoBackup();
   showToast('✅ Datos guardados correctamente');
   renderAll();
+  pushToCloud().catch(() => {});
+}
+
+// ─────────────────────────────────────────────────────
+// CLOUD SYNC — Supabase Storage
+// App privada de equipo: el key vive en el cliente.
+// ─────────────────────────────────────────────────────
+const CLOUD_URL    = 'https://jxrtekfcwmdgowmqciwl.supabase.co';
+const CLOUD_KEY    = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp4cnRla2Zjd21kZ293bXFjaXdsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTcyNTA1MCwiZXhwIjoyMDk3MzAxMDUwfQ.7vm07f0f9ZKbnPTWEfK953AhA5cIMtQBh5kHNXz6-jQ';
+const CLOUD_BUCKET = 'perez-burger';
+
+let cloudOk = false;
+
+function setSyncUI(status) {
+  const el = document.getElementById('sync-indicator');
+  if (!el) return;
+  const MAP = {
+    syncing: { text: '🔄 Sincronizando…', color: 'var(--accent2)' },
+    synced:  { text: '☁️ Sincronizado',   color: 'var(--green)'  },
+    offline: { text: '📴 Sin conexión',   color: 'var(--red)'    },
+    local:   { text: '💾 Local',          color: 'var(--muted)'  },
+  };
+  const s = MAP[status] || MAP.local;
+  el.textContent = s.text;
+  el.style.color = s.color;
+  el.style.borderColor = s.color;
+}
+
+async function cloudFetch(method, path, body) {
+  try {
+    const opts = {
+      method,
+      headers: {
+        'apikey': CLOUD_KEY,
+        'Authorization': 'Bearer ' + CLOUD_KEY,
+        'Content-Type': 'application/json',
+        'x-upsert': 'true',
+        'cache-control': 'no-cache',
+      },
+    };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const r = await fetch(`${CLOUD_URL}/storage/v1/object/${CLOUD_BUCKET}/${path}`, opts);
+    return r;
+  } catch(e) { return null; }
+}
+
+async function cloudGet(path) {
+  const r = await cloudFetch('GET', path);
+  if (!r || !r.ok) return null;
+  try { return await r.json(); } catch(e) { return null; }
+}
+
+async function cloudPut(path, obj) {
+  const r = await cloudFetch('POST', path, obj);
+  return r && r.ok;
+}
+
+async function cloudListHistorial() {
+  try {
+    const r = await fetch(`${CLOUD_URL}/storage/v1/object/list/${CLOUD_BUCKET}`, {
+      method: 'POST',
+      headers: {
+        'apikey': CLOUD_KEY,
+        'Authorization': 'Bearer ' + CLOUD_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ prefix: 'historial/', limit: 100, offset: 0 }),
+    });
+    if (!r.ok) return [];
+    const list = await r.json();
+    return Array.isArray(list) ? list.map(f => f.name) : [];
+  } catch(e) { return []; }
+}
+
+// Carga datos desde la nube al iniciar (gana quien tiene _updatedAt más reciente)
+async function initCloudSync() {
+  setSyncUI('syncing');
+  const cloudData = await cloudGet('current.json');
+  if (!cloudData) { setSyncUI(cloudOk ? 'local' : 'offline'); cloudOk = false; return; }
+  cloudOk = true;
+
+  const localTs = data._updatedAt || 0;
+  const cloudTs = cloudData._updatedAt || 0;
+
+  if (cloudTs > localTs) {
+    data = migrateData(cloudData);
+    localStorage.setItem(MAIN_KEY, JSON.stringify(data));
+    renderAll();
+    showToast('☁️ Datos sincronizados desde la nube');
+  }
+
+  // Sincronizar historial: bajar de la nube lo que no hay en local
+  await mergeHistorialFromCloud();
+  setSyncUI('synced');
+}
+
+// Sube datos actuales a la nube (background, no bloquea UI)
+async function pushToCloud() {
+  if (!cloudOk) {
+    // Reintentar conexión si estaba offline
+    const probe = await cloudGet('current.json');
+    if (!probe && probe !== null) { setSyncUI('offline'); return; }
+    cloudOk = true;
+  }
+  setSyncUI('syncing');
+  data._updatedAt = data._updatedAt || Date.now();
+  const ok = await cloudPut('current.json', data);
+  setSyncUI(ok ? 'synced' : 'offline');
+  if (!ok) cloudOk = false;
+}
+
+// Sube un snapshot de historial a la nube
+async function pushHistorialSnapshot(snapshot) {
+  if (!cloudOk) return;
+  await cloudPut(`historial/${snapshot.mesAnio}.json`, snapshot);
+}
+
+// Baja del historial cloud los meses que no están en local
+async function mergeHistorialFromCloud() {
+  const fileNames = await cloudListHistorial();
+  if (!fileNames.length) return;
+
+  const local   = JSON.parse(localStorage.getItem(HISTORIAL_KEY) || '[]');
+  const localIds = new Set(local.map(h => h.mesAnio));
+  let changed = false;
+
+  for (const name of fileNames) {
+    const mesAnio = name.replace('.json', '');
+    if (localIds.has(mesAnio)) continue;
+    const snap = await cloudGet(`historial/${name}`);
+    if (snap && snap.mesAnio) {
+      local.push(snap);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    local.sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
+    localStorage.setItem(HISTORIAL_KEY, JSON.stringify(local));
+  }
 }
 
 // Guarda silenciosamente sin toast ni re-render (para auto-guardado en campos)
 function silentSave() {
   syncAutoBalances();
+  data._updatedAt = Date.now();
   localStorage.setItem(MAIN_KEY, JSON.stringify(data));
+  pushToCloud().catch(() => {});
 }
 
 function silentSaveBalance() {
@@ -1560,14 +1703,16 @@ function cerrarMes() {
 
   if (!confirm(`¿Cerrar el mes de ${mes} ${anio} y comenzar uno nuevo?\n\nLos datos quedarán guardados en el historial.`)) return;
 
-  // Archivar en historial
+  // Archivar en historial local y en la nube
   const historial = JSON.parse(localStorage.getItem(HISTORIAL_KEY) || '[]');
-  historial.push({
+  const snapshot = {
     mesAnio:   `${mes}_${anio}`,
     timestamp: new Date().toISOString(),
     data:      JSON.parse(JSON.stringify(data)),
-  });
+  };
+  historial.push(snapshot);
   localStorage.setItem(HISTORIAL_KEY, JSON.stringify(historial));
+  pushHistorialSnapshot(snapshot).catch(() => {});
 
   // Calcular mes siguiente
   const idxMes = MESES_NAMES.findIndex(m => m.toLowerCase() === mes.toLowerCase());
@@ -1901,6 +2046,7 @@ function downloadAutoBackup(i) {
 // 31. INIT
 // ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  loadData();
+  loadData();          // carga localStorage inmediatamente (no bloquea)
   renderAll();
+  initCloudSync();     // sincroniza con la nube en background
 });
