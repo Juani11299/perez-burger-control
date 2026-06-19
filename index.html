@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🍔 Control Pere'z Burger</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:       #0d0d1a;
+      --surface:  #13131f;
+      --card:     #1a1a2e;
+      --card2:    #1f1f35;
+      --border:   #2a2a45;
+      --accent:   #f97316;
+      --accent2:  #fbbf24;
+      --green:    #10b981;
+      --red:      #ef4444;
+      --blue:     #6366f1;
+      --text:     #e2e8f0;
+      --muted:    #94a3b8;
+      --sidebar-w: 240px;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+
+    /* ── SIDEBAR ── */
+    #sidebar {
+      width: var(--sidebar-w); background: var(--surface); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto;
+    }
+    .brand { padding: 22px 20px 18px; border-bottom: 1px solid var(--border); }
+    .brand h1 { font-size: 17px; font-weight: 700; color: var(--accent); letter-spacing: .3px; }
+    .brand p  { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .nav-section { padding: 16px 12px 6px; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px; padding: 9px 16px;
+      font-size: 13px; color: var(--muted); cursor: pointer; border-radius: 8px; margin: 2px 8px;
+      transition: all .18s; text-decoration: none; border: none; background: none; width: calc(100% - 16px); text-align: left;
+    }
+    .nav-item:hover { background: var(--card); color: var(--text); }
+    .nav-item.active { background: rgba(249,115,22,.15); color: var(--accent); }
+    .nav-item .icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+    .sidebar-footer { margin-top: auto; padding: 16px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); text-align: center; }
+
+    /* ── MAIN ── */
+    #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    #topbar {
+      height: 58px; background: var(--surface); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; padding: 0 28px; flex-shrink: 0;
+    }
+    #topbar h2 { font-size: 17px; font-weight: 600; }
+    .topbar-right { display: flex; align-items: center; gap: 12px; }
+    .month-badge { background: var(--card2); border: 1px solid var(--border); padding: 5px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; color: var(--accent2); }
+    .btn {
+      padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+      border: none; transition: all .18s; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #ea6c10; }
+    .btn-ghost { background: var(--card2); color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--border); }
+    .btn-success { background: var(--green); color: #fff; }
+    .btn-success:hover { background: #0da070; }
+    .btn-danger  { background: var(--red);   color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    #content { flex: 1; overflow-y: auto; padding: 28px; }
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* ── CARDS ── */
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr)); gap: 16px; margin-bottom: 28px; }
+    .kpi-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px;
+      position: relative; overflow: hidden;
+    }
+    .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--accent); border-radius: 12px 12px 0 0; }
+    .kpi-card.green::before  { background: var(--green); }
+    .kpi-card.blue::before   { background: var(--blue);  }
+    .kpi-card.amber::before  { background: var(--accent2); }
+    .kpi-card.red::before    { background: var(--red);   }
+    .kpi-label { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+    .kpi-value { font-size: 22px; font-weight: 700; margin: 6px 0 2px; color: var(--text); }
+    .kpi-sub   { font-size: 11px; color: var(--muted); }
+    .kpi-icon  { position: absolute; right: 14px; top: 14px; font-size: 22px; opacity: .35; }
+
+    /* ── PANELS ── */
+    .panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 24px; overflow: hidden; }
+    .panel-header {
+      padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex;
+      align-items: center; justify-content: space-between;
+    }
+    .panel-title { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .panel-body  { padding: 20px; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+    @media(max-width:900px){ .two-col,.three-col { grid-template-columns: 1fr; } }
+
+    /* ── TABLES ── */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th { padding: 10px 14px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); background: var(--card2); }
+    tbody td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: var(--card2); }
+    .total-row td { font-weight: 700; color: var(--accent2); background: rgba(251,191,36,.07); }
+
+    /* ── FORMS ── */
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 16px; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .form-group input, .form-group select, .form-group textarea {
+      background: var(--card2); border: 1px solid var(--border); color: var(--text);
+      padding: 9px 12px; border-radius: 8px; font-size: 13px; outline: none; transition: border .18s;
+      font-family: inherit;
+    }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--accent); }
+    .form-group textarea { resize: vertical; min-height: 80px; }
+    .form-actions { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+
+    /* ── PROGRESS BARS ── */
+    .progress-wrap { margin-bottom: 14px; }
+    .progress-label { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
+    .progress-bar { height: 8px; background: var(--card2); border-radius: 10px; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 10px; transition: width .4s; }
+
+    /* ── DISTRIBUTION BOX ── */
+    .dist-box {
+      background: var(--card2); border: 1px solid var(--border); border-radius: 10px;
+      padding: 18px 20px; display: flex; flex-direction: column; gap: 10px;
+    }
+    .dist-person { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border); }
+    .dist-person .name { font-weight: 700; font-size: 15px; }
+    .dist-person .amount { font-size: 20px; font-weight: 800; }
+    .dist-person.juan { border-color: rgba(99,102,241,.4); background: rgba(99,102,241,.07); }
+    .dist-person.juan .amount { color: var(--blue); }
+    .dist-person.emi  { border-color: rgba(236,72,153,.4); background: rgba(236,72,153,.07); }
+    .dist-person.emi  .amount { color: #ec4899; }
+
+    /* ── BADGE ── */
+    .badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+    .badge-green  { background: rgba(16,185,129,.15); color: var(--green); }
+    .badge-red    { background: rgba(239,68,68,.15);  color: var(--red);   }
+    .badge-orange { background: rgba(249,115,22,.15); color: var(--accent); }
+    .badge-blue   { background: rgba(99,102,241,.15); color: var(--blue);  }
+    .badge-amber  { background: rgba(251,191,36,.15); color: var(--accent2); }
+
+    /* ── FONDO COMÚN ── */
+    .fc-row-ingreso td:first-child::before { content: '▲ '; color: var(--green); }
+    .fc-row-egreso  td:first-child::before { content: '▼ '; color: var(--red); }
+
+    /* ── CHART containers ── */
+    .chart-container { position: relative; height: 260px; }
+
+    /* ── TOAST ── */
+    #toast {
+      position: fixed; bottom: 24px; right: 24px; background: var(--green);
+      color: #fff; padding: 12px 22px; border-radius: 10px; font-size: 13px; font-weight: 600;
+      transform: translateY(80px); opacity: 0; transition: all .3s; z-index: 999;
+    }
+    #toast.show { transform: translateY(0); opacity: 1; }
+
+    /* ── MODAL ── */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 100;
+      display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity .2s;
+      overflow-y: auto; padding: 20px;
+    }
+    .modal-overlay.open { opacity: 1; pointer-events: all; }
+    .modal { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 28px; width: 460px; max-width: 95vw; max-height: 90vh; overflow-y: auto; }
+    .modal-wide { width: 580px; }
+    .modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 20px; }
+
+    /* ── SCROLLBAR ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3a3a60; }
+
+    .divider { height: 1px; background: var(--border); margin: 20px 0; }
+    .text-green { color: var(--green); }
+    .text-red   { color: var(--red);   }
+    .text-amber { color: var(--accent2); }
+    .text-accent{ color: var(--accent); }
+    .text-muted { color: var(--muted); }
+    .fw-700 { font-weight: 700; }
+    .fs-13  { font-size: 13px; }
+    .mt-4   { margin-top: 16px; }
+    .align-right { text-align: right; }
+
+    /* ── NEW COMPONENTS ── */
+    .info-box {
+      background: rgba(99,102,241,.08); border: 1px solid rgba(99,102,241,.2);
+      border-radius: 8px; padding: 12px 16px; font-size: 13px; color: var(--muted);
+      margin-bottom: 16px;
+    }
+    .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    .filter-btn {
+      padding: 5px 14px; border-radius: 20px; font-size: 12px; font-weight: 600; cursor: pointer;
+      border: 1px solid var(--border); background: var(--card2); color: var(--muted); transition: all .18s;
+    }
+    .filter-btn.active, .filter-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .auto-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 14px 18px; background: var(--card2); border: 1px solid var(--border);
+      border-radius: 10px; margin-bottom: 10px;
+    }
+    .auto-row-label { font-size: 13px; color: var(--muted); }
+    .auto-row-value { font-size: 18px; font-weight: 700; }
+    .link-btn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
+    .pago-row-input {
+      background: var(--card2); border: 1px solid var(--border); color: var(--text);
+      padding: 8px 10px; border-radius: 8px; font-size: 13px; font-family: inherit; outline: none;
+    }
+    .pago-row-input:focus { border-color: var(--accent); }
+    .historial-card {
+      background: var(--card2); border: 1px solid var(--border); border-radius: 10px;
+      padding: 16px 20px; margin-bottom: 12px;
+    }
+    .wf-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .wf-table td { padding: 9px 14px; border-bottom: 1px solid var(--border); }
+    .wf-table tr.wf-sum td { font-weight: 700; color: var(--accent2); background: rgba(251,191,36,.07); border-top: 2px solid var(--border); }
+    .wf-table tr.wf-sub td { font-weight: 600; }
+    .plat-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .cfg-plat-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════ SIDEBAR ═══════════════ -->
+<nav id="sidebar">
+  <div class="brand">
+    <h1>🍔 Pere'z Burger</h1>
+    <p>Panel de Control</p>
+  </div>
+
+  <span class="nav-section">Principal</span>
+  <button class="nav-item active" data-section="dashboard">
+    <span class="icon">📊</span> Dashboard
+  </button>
+  <button class="nav-item" data-section="ventas">
+    <span class="icon">💰</span> Ventas por Día
+  </button>
+  <button class="nav-item" data-section="productos">
+    <span class="icon">🍔</span> Productos
+  </button>
+
+  <span class="nav-section">Gastos</span>
+  <button class="nav-item" data-section="gastosf">
+    <span class="icon">🧾</span> Gastos Fijos
+  </button>
+  <button class="nav-item" data-section="gastosg">
+    <span class="icon">📦</span> Gastos Generales
+  </button>
+
+  <span class="nav-section">Finanzas</span>
+  <button class="nav-item" data-section="balance">
+    <span class="icon">📋</span> Balance General
+  </button>
+  <button class="nav-item" data-section="pagos">
+    <span class="icon">💳</span> Formas de Pago
+  </button>
+  <button class="nav-item" data-section="distribucion">
+    <span class="icon">💸</span> Distribución
+  </button>
+  <button class="nav-item" data-section="fondocomun">
+    <span class="icon">🏦</span> Fondo Común
+  </button>
+  <button class="nav-item" data-section="resumen">
+    <span class="icon">📊</span> Resumen del Mes
+  </button>
+
+  <span class="nav-section">Historial</span>
+  <button class="nav-item" data-section="historial">
+    <span class="icon">📚</span> Historial de Meses
+  </button>
+
+  <span class="nav-section">Configuración</span>
+  <button class="nav-item" data-section="config">
+    <span class="icon">⚙️</span> Configurar Mes
+  </button>
+
+  <div class="sidebar-footer">v2.0 · Control Mensual</div>
+</nav>
+
+<!-- ═══════════════ MAIN ═══════════════ -->
+<div id="main">
+  <header id="topbar">
+    <h2 id="topbar-title">Dashboard</h2>
+    <div class="topbar-right">
+      <span class="month-badge" id="current-month-badge">Abril 2026</span>
+      <button class="btn btn-ghost" onclick="exportCSV()">📥 CSV</button>
+      <button class="btn btn-ghost" onclick="exportJSON()" title="Guardar backup completo en archivo JSON">💾 Backup</button>
+      <label class="btn btn-ghost" style="cursor:pointer" title="Restaurar desde archivo de backup">
+        📂 Restaurar <input type="file" id="import-json-input" accept=".json" style="display:none" onchange="importJSON(this)" />
+      </label>
+      <button class="btn btn-primary" onclick="saveData()">💾 Guardar</button>
+    </div>
+  </header>
+
+  <div id="content">
+
+    <!-- ════════════ DASHBOARD ════════════ -->
+    <section class="section active" id="s-dashboard">
+      <div class="kpi-grid" id="kpi-grid"></div>
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">📈 Ventas por Día</span>
+          </div>
+          <div class="panel-body">
+            <div class="chart-container"><canvas id="chart-ventas-dash"></canvas></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">💳 Formas de Pago</span>
+          </div>
+          <div class="panel-body">
+            <div class="chart-container"><canvas id="chart-pagos-dash"></canvas></div>
+          </div>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">⚖️ Balance Rápido</span></div>
+          <div class="panel-body" id="dash-balance"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">🎯 Distribución Final</span></div>
+          <div class="panel-body" id="dash-dist"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ VENTAS ════════════ -->
+    <section class="section" id="s-ventas">
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">💰 Ventas por Día</span>
+          <button class="btn btn-primary" onclick="openAddVentaModal()">+ Agregar Día</button>
+        </div>
+        <div class="panel-body" style="padding:0">
+          <div style="overflow-x:auto">
+            <table id="ventas-table">
+              <thead><tr>
+                <th>Día</th><th>Fecha</th><th>Ventas Totales</th><th>Burgers</th><th>Detalle Cobros</th><th>% del Total</th><th>Acciones</th>
+              </tr></thead>
+              <tbody id="ventas-tbody"></tbody>
+              <tfoot><tr class="total-row" id="ventas-total"></tr></tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">📊 Gráfico de Ventas</span></div>
+        <div class="panel-body">
+          <div class="chart-container" style="height:320px"><canvas id="chart-ventas-full"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ PRODUCTOS ════════════ -->
+    <section class="section" id="s-productos">
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">🍔 Cantidades Vendidas del Mes</span></div>
+        <div class="panel-body">
+          <div class="form-grid" id="productos-form"></div>
+          <div class="form-actions"><button class="btn btn-primary" onclick="saveProductos()">💾 Guardar Cantidades</button></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">📊 Distribución de Productos</span></div>
+        <div class="panel-body">
+          <div class="chart-container" style="height:300px"><canvas id="chart-productos"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ GASTOS FIJOS ════════════ -->
+    <section class="section" id="s-gastosf">
+      <div class="kpi-grid" id="gastosf-kpis"></div>
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">🧾 Gastos Fijos del Mes</span>
+          <button class="btn btn-primary" onclick="openAddGastoFijoModal()">+ Agregar</button>
+        </div>
+        <div class="panel-body">
+          <table id="gastosf-table">
+            <thead><tr><th>Nombre</th><th>Monto</th><th>Acciones</th></tr></thead>
+            <tbody id="gastosf-tbody"></tbody>
+            <tfoot><tr class="total-row" id="gastosf-total"></tr></tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ GASTOS GENERALES ════════════ -->
+    <section class="section" id="s-gastosg">
+      <div class="kpi-grid" id="gastosg-kpis"></div>
+      <div class="two-col">
+        <div class="panel" style="grid-column:1/-1">
+          <div class="panel-header">
+            <span class="panel-title">📦 Gastos Generales del Mes</span>
+            <button class="btn btn-primary" onclick="openAddGastoGModal()">+ Agregar</button>
+          </div>
+          <div class="panel-body">
+            <div class="filter-bar" id="gastosg-filters"></div>
+            <table id="gastosg-table">
+              <thead><tr><th>Fecha</th><th>Nombre</th><th>Categoría</th><th>Monto</th><th>Acciones</th></tr></thead>
+              <tbody id="gastosg-tbody"></tbody>
+              <tfoot><tr class="total-row" id="gastosg-total"></tr></tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">📊 Por Categoría</span></div>
+          <div class="panel-body">
+            <div class="chart-container"><canvas id="chart-gastosg"></canvas></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">📋 Subtotales</span></div>
+          <div class="panel-body" id="gastosg-subtotales"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ PAGOS ════════════ -->
+    <section class="section" id="s-pagos">
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">💳 Formas de Pago</span>
+          </div>
+          <div class="panel-body">
+            <div class="info-box">ℹ️ Los totales se calculan automáticamente desde los cierres diarios. Para editar, modificá los pagos en cada día de venta.</div>
+            <table id="pagos-table">
+              <thead><tr><th>Forma de Pago</th><th>Monto</th><th>Incidencia</th></tr></thead>
+              <tbody id="pagos-tbody"></tbody>
+              <tfoot><tr class="total-row" id="pagos-total"></tr></tfoot>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">🍩 Distribución</span></div>
+          <div class="panel-body">
+            <div class="chart-container"><canvas id="chart-pagos-full"></canvas></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">📊 Barras de Participación</span></div>
+        <div class="panel-body" id="pagos-progress"></div>
+      </div>
+    </section>
+
+    <!-- ════════════ BALANCE ════════════ -->
+    <section class="section" id="s-balance">
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">📋 Balance General del Mes</span></div>
+        <div class="panel-body" id="balance-panel-body"></div>
+      </div>
+      <div class="panel" style="margin-top:0">
+        <div class="panel-header"><span class="panel-title">📊 Composición de Egresos</span></div>
+        <div class="panel-body">
+          <div class="chart-container"><canvas id="chart-balance"></canvas></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">💰 Dinero Disponible (Caja)</span></div>
+        <div class="panel-body" id="balance-resumen"></div>
+      </div>
+    </section>
+
+    <!-- ════════════ DISTRIBUCIÓN ════════════ -->
+    <section class="section" id="s-distribucion">
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">🧮 Cálculo Automático de Ganancias</span></div>
+        <div class="panel-body" id="dist-calculo"></div>
+      </div>
+
+      <!-- Egresos de Ganancias — NUEVO -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">💸 Egresos de Ganancias (descuentos generales)</span>
+          <button class="btn btn-primary" onclick="openAddEgresoModal()">＋ Agregar Egreso</button>
+        </div>
+        <div class="panel-body">
+          <table id="egresos-table">
+            <thead><tr><th>Fecha</th><th>Detalle</th><th>Monto</th><th>Acciones</th></tr></thead>
+            <tbody id="egresos-tbody"></tbody>
+            <tfoot><tr class="total-row" id="egresos-total"></tr></tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">📋 Adelantos del Mes</span>
+            <button class="btn btn-primary" onclick="openAddAdelantoModal()">+ Agregar</button>
+          </div>
+          <div class="panel-body">
+            <table id="adelantos-table">
+              <thead><tr><th>Persona</th><th>Monto</th><th>Nota</th><th>Acciones</th></tr></thead>
+              <tbody id="adelantos-tbody"></tbody>
+              <tfoot><tr class="total-row" id="adelantos-total"></tr></tfoot>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">💸 Totales a Pagar</span></div>
+          <div class="panel-body" id="dist-totales"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ FONDO COMÚN ════════════ -->
+    <section class="section" id="s-fondocomun">
+      <div class="kpi-grid" id="fc-kpis"></div>
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">🏦 Movimientos del Fondo Común</span>
+          <button class="btn btn-primary" onclick="openAddFCModal()">+ Movimiento</button>
+        </div>
+        <div class="panel-body">
+          <table id="fc-table">
+            <thead><tr><th>Fecha</th><th>Tipo</th><th>Monto</th><th>Detalle</th><th>Acciones</th></tr></thead>
+            <tbody id="fc-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ RESUMEN DEL MES ════════════ -->
+    <section class="section" id="s-resumen">
+      <div class="kpi-grid" id="resumen-kpis"></div>
+
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">💳 Recaudación por Plataforma</span></div>
+          <div class="panel-body">
+            <table id="resumen-pagos-table">
+              <thead><tr><th>Plataforma</th><th>Total del Mes</th><th>% del Total</th></tr></thead>
+              <tbody id="resumen-pagos-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">📅 Actividad del Mes</span></div>
+          <div class="panel-body" id="resumen-actividad"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">📊 Flujo Completo de Dinero</span></div>
+        <div class="panel-body">
+          <table class="wf-table" id="resumen-flujo"></table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">🎯 Distribución Final</span></div>
+        <div class="panel-body" id="resumen-dist"></div>
+      </div>
+
+      <div class="panel" id="resumen-comparativa-panel" style="display:none">
+        <div class="panel-header"><span class="panel-title">📈 Comparativa con Meses Anteriores</span></div>
+        <div class="panel-body">
+          <div class="chart-container" style="height:300px"><canvas id="chart-comparativa"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ HISTORIAL ════════════ -->
+    <section class="section" id="s-historial">
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">📚 Historial de Meses Archivados</span>
+        </div>
+        <div class="panel-body">
+          <div id="historial-acumulado" style="margin-bottom:16px"></div>
+          <div id="historial-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ CONFIG ════════════ -->
+    <section class="section" id="s-config">
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">⚙️ Configuración del Mes</span></div>
+        <div class="panel-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Nombre del Mes</label>
+              <input type="text" id="cfg-mes" placeholder="Ej: Abril" />
+            </div>
+            <div class="form-group">
+              <label>Año</label>
+              <input type="number" id="cfg-anio" placeholder="Ej: 2026" />
+            </div>
+            <div class="form-group">
+              <label>% Fondo Común</label>
+              <input type="number" id="cfg-pct-fc" step="0.1" placeholder="Ej: 10" />
+            </div>
+            <div class="form-group">
+              <label>Nombre Socio 1</label>
+              <input type="text" id="cfg-s1-nombre" placeholder="Juan" />
+            </div>
+            <div class="form-group">
+              <label>% Socio 1</label>
+              <input type="number" id="cfg-s1-pct" step="0.1" placeholder="60" />
+            </div>
+            <div class="form-group">
+              <label>Nombre Socio 2</label>
+              <input type="text" id="cfg-s2-nombre" placeholder="Emi" />
+            </div>
+            <div class="form-group">
+              <label>% Socio 2</label>
+              <input type="number" id="cfg-s2-pct" step="0.1" placeholder="40" />
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" onclick="saveConfig()">💾 Guardar Config</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Plataformas de pago -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">💳 Plataformas de Pago</span>
+          <button class="btn btn-ghost" onclick="addPlataforma()">+ Agregar</button>
+        </div>
+        <div class="panel-body">
+          <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Estas plataformas aparecen al registrar un cierre de caja diario.</p>
+          <div id="cfg-plataformas-list"></div>
+          <div class="form-actions" style="margin-top:16px">
+            <button class="btn btn-primary" onclick="savePlataformas()">💾 Guardar Plataformas</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cierre de mes -->
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">📅 Cierre de Mes</span></div>
+        <div class="panel-body">
+          <p style="font-size:13px;color:var(--muted);margin-bottom:20px">
+            Al cerrar el mes, todos los datos quedan archivados en el historial y se comienza un mes nuevo limpio.
+          </p>
+          <div class="form-actions">
+            <button class="btn btn-success" onclick="cerrarMes()">📅 Cerrar Mes y Comenzar Nuevo</button>
+            <button class="btn btn-danger btn-sm" onclick="resetData()">🗑️ Resetear Todo (sin guardar)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Backups automáticos -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">🛡️ Backups de Seguridad</span>
+          <button class="btn btn-primary" onclick="exportJSON()">💾 Exportar Backup Ahora</button>
+        </div>
+        <div class="panel-body">
+          <p style="font-size:13px;color:var(--muted);margin-bottom:18px">
+            Cada vez que guardás, el sistema crea un backup automático en el navegador. Acá podés ver los últimos 3 y restaurarlos con un clic.
+          </p>
+          <div id="autobackup-list"></div>
+          <div class="divider" style="margin:18px 0"></div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Restaurar desde archivo:</p>
+          <label class="btn btn-ghost" style="cursor:pointer;width:fit-content">
+            📂 Seleccionar archivo .json
+            <input type="file" accept=".json" style="display:none" onchange="importJSON(this)" />
+          </label>
+        </div>
+      </div>
+    </section>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+<!-- ════════ MODALS ════════ -->
+
+<!-- Modal Venta (actualizado con fecha y pagos) -->
+<div class="modal-overlay" id="modal-venta">
+  <div class="modal modal-wide">
+    <h3>💰 Agregar / Editar Día de Venta</h3>
+    <input type="hidden" id="venta-edit-index" value="-1" />
+    <div class="form-grid" style="grid-template-columns:1fr 1fr">
+      <div class="form-group"><label>Día</label><input type="text" id="venta-dia" placeholder="Miércoles" /></div>
+      <div class="form-group"><label>Fecha</label><input type="date" id="venta-fecha" /></div>
+      <div class="form-group"><label>Burgers</label><input type="number" id="venta-burgers" placeholder="100" /></div>
+      <div class="form-group">
+        <label>Total del Día (auto)</label>
+        <input type="text" id="venta-total-display" readonly style="background:var(--bg);font-weight:700;color:var(--accent2)" placeholder="$0" />
+      </div>
+    </div>
+    <div style="margin-top:18px">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">
+        Cobros por Plataforma
+      </div>
+      <div id="venta-pagos-list"></div>
+      <button class="btn btn-ghost btn-sm" onclick="addVentaPagoRow()" style="margin-top:8px">+ Agregar Plataforma</button>
+    </div>
+    <div class="form-actions" style="margin-top:18px">
+      <button class="btn btn-primary" onclick="saveVenta()">Guardar</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-venta')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Gasto Fijo -->
+<div class="modal-overlay" id="modal-gastosf">
+  <div class="modal">
+    <h3>🧾 Gasto Fijo</h3>
+    <input type="hidden" id="gf-edit-index" value="-1" />
+    <div class="form-grid" style="grid-template-columns:1fr 1fr">
+      <div class="form-group" style="grid-column:1/-1"><label>Nombre</label><input type="text" id="gf-nombre" placeholder="Ej: Alquiler" /></div>
+      <div class="form-group"><label>Monto ($)</label><input type="number" id="gf-monto" placeholder="50000" /></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveGastoFijo()">Guardar</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-gastosf')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Gasto General -->
+<div class="modal-overlay" id="modal-gastosg">
+  <div class="modal">
+    <h3>📦 Gasto General</h3>
+    <input type="hidden" id="gg-edit-index" value="-1" />
+    <div class="form-grid" style="grid-template-columns:1fr 1fr">
+      <div class="form-group"><label>Fecha</label><input type="date" id="gg-fecha" /></div>
+      <div class="form-group">
+        <label>Categoría</label>
+        <select id="gg-categoria">
+          <option value="Insumos">Insumos</option>
+          <option value="Servicios">Servicios</option>
+          <option value="Mantenimiento">Mantenimiento</option>
+          <option value="Otros">Otros</option>
+        </select>
+      </div>
+      <div class="form-group" style="grid-column:1/-1"><label>Nombre</label><input type="text" id="gg-nombre" placeholder="Ej: Compra de harina" /></div>
+      <div class="form-group"><label>Monto ($)</label><input type="number" id="gg-monto" placeholder="30000" /></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveGastoG()">Guardar</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-gastosg')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Egreso de Ganancia -->
+<div class="modal-overlay" id="modal-egreso">
+  <div class="modal">
+    <h3>💸 Egreso de Ganancia</h3>
+    <input type="hidden" id="egreso-edit-index" value="-1" />
+    <div class="form-grid" style="grid-template-columns:1fr 1fr">
+      <div class="form-group"><label>Fecha</label><input type="date" id="egreso-fecha" /></div>
+      <div class="form-group"><label>Monto ($)</label><input type="number" id="egreso-monto" placeholder="50000" /></div>
+      <div class="form-group" style="grid-column:1/-1"><label>Detalle</label><input type="text" id="egreso-detalle" placeholder="Descripción del egreso" /></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveEgreso()">Guardar</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-egreso')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Adelanto -->
+<div class="modal-overlay" id="modal-adelanto">
+  <div class="modal">
+    <h3>📋 Agregar Adelanto</h3>
+    <input type="hidden" id="adelanto-edit-index" value="-1" />
+    <div class="form-grid" style="grid-template-columns:1fr 1fr">
+      <div class="form-group">
+        <label>Persona</label>
+        <select id="adelanto-persona">
+          <option value="juan">Socio 1</option>
+          <option value="emi">Socio 2</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Monto ($)</label><input type="number" id="adelanto-monto" placeholder="100000" /></div>
+      <div class="form-group" style="grid-column:1/-1"><label>Nota</label><input type="text" id="adelanto-nota" placeholder="Ej: Retiro personal" /></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveAdelanto()">Guardar</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-adelanto')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Fondo Común -->
+<div class="modal-overlay" id="modal-fc">
+  <div class="modal">
+    <h3>🏦 Nuevo Movimiento — Fondo Común</h3>
+    <input type="hidden" id="fc-edit-index" value="-1" />
+    <div class="form-grid" style="grid-template-columns:1fr 1fr">
+      <div class="form-group"><label>Fecha</label><input type="date" id="fc-fecha" /></div>
+      <div class="form-group">
+        <label>Tipo</label>
+        <select id="fc-tipo">
+          <option value="Ingreso">Ingreso</option>
+          <option value="Egreso">Egreso</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Monto ($)</label><input type="number" id="fc-monto" placeholder="100000" /></div>
+      <div class="form-group"><label>Detalle</label><input type="text" id="fc-detalle" placeholder="Descripción" /></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveFC()">Guardar</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-fc')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal detalle historial (solo lectura) -->
+<div class="modal-overlay" id="modal-historial-detail">
+  <div class="modal modal-wide" style="width:640px">
+    <h3 id="historial-detail-title">Detalle del Mes</h3>
+    <div id="historial-detail-body" style="font-size:13px"></div>
+    <div class="form-actions" style="margin-top:20px">
+      <button class="btn btn-ghost" onclick="closeModal('modal-historial-detail')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast">✅ Guardado correctamente</div>
+
+<script src="app.js"></script>
+</body>
+</html>

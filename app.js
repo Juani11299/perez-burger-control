@@ -1,0 +1,1877 @@
+/* ═══════════════════════════════════════════════════════
+   CONTROL HAMBURGUESERÍA — app.js v2.0
+   Cambios: cierre de caja diario, gastos CRUD detallados,
+   egresos de ganancia, historial mensual, resumen del mes.
+═══════════════════════════════════════════════════════ */
+
+'use strict';
+
+// ─────────────────────────────────────────────────────
+// 0. CONSTANTES GLOBALES
+// ─────────────────────────────────────────────────────
+const MAIN_KEY        = 'hamburgueseria_data';
+const AUTOBACKUP_KEY  = 'hamburgueseria_autobackups';
+const HISTORIAL_KEY   = 'perez_historial_meses';
+const MAX_AUTOBACKUPS = 3;
+
+const MESES_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                     'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+const CATEGORIAS_GG = ['Insumos','Servicios','Mantenimiento','Otros'];
+
+const CAT_COLORS = {
+  Insumos: '#f97316', Servicios: '#6366f1', Mantenimiento: '#fbbf24', Otros: '#10b981'
+};
+
+let currentGastosGFilter = 'Todos';
+let currentSection = 'dashboard';
+
+// ─────────────────────────────────────────────────────
+// 1. DATOS POR DEFECTO
+// ─────────────────────────────────────────────────────
+const DEFAULT_DATA = {
+  config: {
+    mes: 'Abril',
+    anio: 2026,
+    pctFondoComun: 10,
+    socio1Nombre: 'Juan',
+    socio1Pct: 60,
+    socio2Nombre: 'Emi',
+    socio2Pct: 40,
+    plataformas: ['Efectivo', 'Mercado Pago 1', 'Mercado Pago 2'],
+  },
+  ventas: [
+    { dia: 'Miércoles', fecha: '', monto: 1359170,  burgers: 103, pagos: [] },
+    { dia: 'Jueves',    fecha: '', monto: 2830800,  burgers: 209, pagos: [] },
+    { dia: 'Viernes',   fecha: '', monto: 4217330,  burgers: 303, pagos: [] },
+    { dia: 'Sábado',    fecha: '', monto: 4354670,  burgers: 315, pagos: [] },
+    { dia: 'Domingo',   fecha: '', monto: 2184100,  burgers: 149, pagos: [] },
+  ],
+  productos: {
+    burgers: 1188, dips: 79, papas: 15, nuggets: 29, aros: 40, helados: 8, bebidas: 36,
+  },
+  pagos: [
+    { nombre: 'Efectivo',       monto: 4688500 },
+    { nombre: 'Mercado Pago 1', monto: 8151572 },
+    { nombre: 'Mercado Pago 2', monto: 3437395 },
+  ],
+  balance: {
+    ventas:      16277467,
+    compras:      8240627,
+    gastosFijos:  1184838,
+    sueldos:      2170000,
+  },
+  adelantos: [
+    { persona: 'juan', monto: 300000, nota: 'Retiro personal' },
+    { persona: 'juan', monto:  60000, nota: 'Gastos varios'   },
+  ],
+  fondoComun: [
+    { fecha: '2026-01-31', tipo: 'Ingreso', monto: 353666, detalle: 'Cierre de mes Marzo' },
+    { fecha: '2026-01-31', tipo: 'Egreso',  monto: 297000, detalle: 'Cuota Amasadora'     },
+    { fecha: '2026-01-31', tipo: 'Ingreso', monto:  56600, detalle: 'Gastos Varios local' },
+  ],
+  gastosFijosDetalle: [
+    { nombre: 'Alquiler',        monto: 0 },
+    { nombre: 'Cuota Amasadora', monto: 0 },
+  ],
+  gastosGenerales:  [],
+  egresosGanancia:  [],
+};
+
+// ─────────────────────────────────────────────────────
+// 2. ESTADO GLOBAL
+// ─────────────────────────────────────────────────────
+let data   = JSON.parse(JSON.stringify(DEFAULT_DATA));
+let charts = {};
+
+// ─────────────────────────────────────────────────────
+// 3. MIGRACIÓN DE DATOS
+// ─────────────────────────────────────────────────────
+function migrateData(d) {
+  if (!d.gastosFijosDetalle)   d.gastosFijosDetalle  = [];
+  if (!d.gastosGenerales)      d.gastosGenerales      = [];
+  if (!d.egresosGanancia)      d.egresosGanancia      = [];
+  if (!d.config.plataformas)   d.config.plataformas   = ['Efectivo','Mercado Pago 1','Mercado Pago 2'];
+  if (!d.pagos)                d.pagos                = [];
+
+  d.ventas = (d.ventas || []).map(v => ({
+    ...v,
+    fecha: v.fecha || '',
+    pagos: v.pagos || [],
+  }));
+
+  const gfMigSum = d.gastosFijosDetalle.reduce((s, g) => s + g.monto, 0);
+  if (gfMigSum > 0) d.balance.gastosFijos = gfMigSum;
+  if (d.gastosGenerales.length > 0) {
+    d.balance.compras = d.gastosGenerales.reduce((s, g) => s + g.monto, 0);
+  }
+
+  return d;
+}
+
+// ─────────────────────────────────────────────────────
+// 4. PERSISTENCIA
+// ─────────────────────────────────────────────────────
+function loadData() {
+  try {
+    const saved = localStorage.getItem(MAIN_KEY);
+    if (saved) data = migrateData(JSON.parse(saved));
+  } catch(e) { /* usa defaults */ }
+}
+
+function saveData() {
+  syncAutoBalances();
+  localStorage.setItem(MAIN_KEY, JSON.stringify(data));
+  saveAutoBackup();
+  showToast('✅ Datos guardados correctamente');
+  renderAll();
+}
+
+function syncAutoBalances() {
+  // Sync ventas from daily sales array (always authoritative if entries exist)
+  if (data.ventas.length > 0) {
+    data.balance.ventas = data.ventas.reduce((s, v) => s + v.monto, 0);
+  }
+  // Only sync gastosFijos if detail panel has been used (sum > 0)
+  const gfSum = data.gastosFijosDetalle.reduce((s, g) => s + g.monto, 0);
+  if (gfSum > 0) data.balance.gastosFijos = gfSum;
+  // Only sync compras if gastosGenerales panel has entries
+  if (data.gastosGenerales.length > 0) {
+    data.balance.compras = data.gastosGenerales.reduce((s, g) => s + g.monto, 0);
+  }
+}
+
+// ─────────────────────────────────────────────────────
+// 5. FORMATEO
+// ─────────────────────────────────────────────────────
+function fmt(n) {
+  const num = Number(n) || 0;
+  return '$' + num.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+function pct(a, b) {
+  if (!b) return '0,00%';
+  return ((a / b) * 100).toFixed(2).replace('.', ',') + '%';
+}
+
+// ─────────────────────────────────────────────────────
+// 6. NAVEGACIÓN
+// ─────────────────────────────────────────────────────
+const SECTION_TITLES = {
+  dashboard:    'Dashboard',
+  ventas:       'Ventas por Día',
+  productos:    'Productos Vendidos',
+  gastosf:      'Gastos Fijos',
+  gastosg:      'Gastos Generales',
+  pagos:        'Formas de Pago',
+  balance:      'Balance General',
+  distribucion: 'Distribución de Ganancias',
+  fondocomun:   'Fondo Común',
+  resumen:      'Resumen del Mes',
+  historial:    'Historial de Meses',
+  config:       'Configuración',
+};
+
+document.querySelectorAll('.nav-item[data-section]').forEach(btn => {
+  btn.addEventListener('click', () => navigateTo(btn.dataset.section, btn));
+});
+
+function navigateTo(sec, btnEl) {
+  currentSection = sec;
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+  const btn = btnEl || document.querySelector(`.nav-item[data-section="${sec}"]`);
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  const secEl = document.getElementById('s-' + sec);
+  if (secEl) secEl.classList.add('active');
+  document.getElementById('topbar-title').textContent = SECTION_TITLES[sec] || sec;
+  renderSection(sec);
+}
+
+// ─────────────────────────────────────────────────────
+// 7. RENDER PRINCIPAL
+// ─────────────────────────────────────────────────────
+function renderAll() {
+  updateMonthBadge();
+  renderDashboard();
+  syncConfigForm();
+  if (currentSection !== 'dashboard' && currentSection !== 'config') {
+    renderSection(currentSection);
+  }
+}
+
+function renderSection(sec) {
+  switch(sec) {
+    case 'dashboard':    renderDashboard();    break;
+    case 'ventas':       renderVentas();       break;
+    case 'productos':    renderProductos();    break;
+    case 'gastosf':      renderGastosFijos();  break;
+    case 'gastosg':      renderGastosGenerales(); break;
+    case 'pagos':        renderPagos();        break;
+    case 'balance':      renderBalance();      break;
+    case 'distribucion': renderDistribucion(); break;
+    case 'fondocomun':   renderFondoComun();   break;
+    case 'resumen':      renderResumen();      break;
+    case 'historial':    renderHistorial();    break;
+    case 'config':       syncConfigForm(); renderAutoBackups(); break;
+  }
+}
+
+function updateMonthBadge() {
+  document.getElementById('current-month-badge').textContent =
+    `${data.config.mes} ${data.config.anio}`;
+}
+
+// ─────────────────────────────────────────────────────
+// 8. CÁLCULOS DERIVADOS
+// ─────────────────────────────────────────────────────
+function calcTotalVentas() {
+  return data.ventas.reduce((s, v) => s + v.monto, 0);
+}
+function calcTotalBurgers() {
+  return data.ventas.reduce((s, v) => s + (v.burgers || 0), 0);
+}
+function calcPagosConsolidados() {
+  const map = {};
+  data.ventas.forEach(v => {
+    (v.pagos || []).forEach(p => {
+      if (p.plataforma && p.monto) {
+        map[p.plataforma] = (map[p.plataforma] || 0) + p.monto;
+      }
+    });
+  });
+  const fromVentas = Object.entries(map).map(([nombre, monto]) => ({ nombre, monto }));
+  return fromVentas.length ? fromVentas : data.pagos;
+}
+function calcTotalPagos() {
+  return calcPagosConsolidados().reduce((s, p) => s + p.monto, 0);
+}
+function calcGananciaNeta() {
+  const { ventas, compras, gastosFijos, sueldos } = data.balance;
+  return ventas - compras - gastosFijos - sueldos;
+}
+function calcFondoComun() {
+  return calcGananciaNeta() * (data.config.pctFondoComun / 100);
+}
+function calcTotalEgresos() {
+  return (data.egresosGanancia || []).reduce((s, e) => s + e.monto, 0);
+}
+function calcGananciaDistribuir() {
+  return calcGananciaNeta() - calcFondoComun() - calcTotalEgresos();
+}
+function calcParteSocio(key) {
+  const pctField = key === 'juan' ? 'socio1Pct' : 'socio2Pct';
+  return calcGananciaDistribuir() * (data.config[pctField] / 100);
+}
+function calcAdelantosSocio(key) {
+  return data.adelantos.filter(a => a.persona === key).reduce((s, a) => s + a.monto, 0);
+}
+function calcTotalAPagar(key) {
+  return calcParteSocio(key) - calcAdelantosSocio(key);
+}
+function calcSaldoFondoComun() {
+  return data.fondoComun.reduce((s, m) => m.tipo === 'Ingreso' ? s + m.monto : s - m.monto, 0);
+}
+
+// ─────────────────────────────────────────────────────
+// 9. DASHBOARD
+// ─────────────────────────────────────────────────────
+function renderDashboard() {
+  renderKPIs();
+  renderChartVentasDash();
+  renderChartPagosDash();
+  renderDashBalance();
+  renderDashDist();
+}
+
+function renderKPIs() {
+  syncAutoBalances();
+  const totalVentas = calcTotalVentas();
+  const neta        = calcGananciaNeta();
+  const saldoFC     = calcSaldoFondoComun();
+
+  const kpis = [
+    { label: 'Ingresos del Mes',   value: fmt(data.balance.ventas),    sub: `${data.config.mes} ${data.config.anio}`, icon: '💰', cls: ''      },
+    { label: 'Total Ventas (días)',value: fmt(totalVentas),             sub: `${data.ventas.length} días`,             icon: '📈', cls: 'green' },
+    { label: 'Ganancia Neta',      value: fmt(neta),                   sub: 'Antes de fondo común',                   icon: '📊', cls: neta >= 0 ? 'green' : 'red' },
+    { label: 'Burgers Vendidas',   value: data.productos.burgers.toLocaleString('es-AR'), sub: 'Total del mes', icon: '🍔', cls: 'amber' },
+    { label: 'A Distribuir',       value: fmt(calcGananciaDistribuir()),sub: `FC: ${fmt(calcFondoComun())}`,           icon: '🎯', cls: 'blue'  },
+    { label: 'Saldo Fondo Común',  value: fmt(saldoFC),                sub: `${data.fondoComun.length} movimientos`,  icon: '🏦', cls: saldoFC >= 0 ? 'green' : 'red' },
+  ];
+
+  document.getElementById('kpi-grid').innerHTML = kpis.map(k => `
+    <div class="kpi-card ${k.cls}">
+      <div class="kpi-icon">${k.icon}</div>
+      <div class="kpi-label">${k.label}</div>
+      <div class="kpi-value">${k.value}</div>
+      <div class="kpi-sub">${k.sub}</div>
+    </div>`).join('');
+}
+
+function renderChartVentasDash() {
+  const ctx = document.getElementById('chart-ventas-dash');
+  destroyChart('ventas-dash');
+  charts['ventas-dash'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.ventas.map(v => v.dia),
+      datasets: [{ label: 'Ventas ($)', data: data.ventas.map(v => v.monto),
+        backgroundColor: 'rgba(249,115,22,0.75)', borderColor: '#f97316', borderWidth: 2, borderRadius: 6 }]
+    },
+    options: chartOptions('Ventas por Día'),
+  });
+}
+
+function renderChartPagosDash() {
+  const ctx   = document.getElementById('chart-pagos-dash');
+  const pagos = calcPagosConsolidados();
+  const total = calcTotalPagos();
+  destroyChart('pagos-dash');
+  charts['pagos-dash'] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: pagos.map(p => p.nombre),
+      datasets: [{ data: pagos.map(p => p.monto),
+        backgroundColor: ['#10b981','#6366f1','#f97316','#fbbf24','#ec4899','#38bdf8'],
+        borderColor: '#1a1a2e', borderWidth: 3 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#e2e8f0', font: { size: 12 } } },
+        tooltip: { callbacks: { label: (c) => ` ${c.label}: ${fmt(c.raw)} (${pct(c.raw, total)})` } }
+      }
+    }
+  });
+}
+
+function renderDashBalance() {
+  const b    = data.balance;
+  const neta = calcGananciaNeta();
+  document.getElementById('dash-balance').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:10px">
+      ${balRow('💰 Ingresos',      b.ventas,      'text-green')}
+      ${balRow('📦 Gastos Generales', -b.compras,  'text-red')}
+      ${balRow('🧾 Gastos Fijos',  -b.gastosFijos,'text-red')}
+      ${balRow('👤 Sueldos',       -b.sueldos,    'text-red')}
+      <div class="divider"></div>
+      ${balRow('📊 Ganancia Neta',  neta, neta >= 0 ? 'text-green' : 'text-red', true)}
+    </div>`;
+}
+
+function balRow(label, val, cls, bold=false) {
+  return `<div style="display:flex;justify-content:space-between;align-items:center;${bold?'font-weight:700;font-size:15px':''}">
+    <span class="text-muted" style="font-size:13px">${label}</span>
+    <span class="${cls}">${fmt(Math.abs(val))}${val < 0 ? ' ↓' : ' ↑'}</span>
+  </div>`;
+}
+
+function renderDashDist() {
+  const c = data.config;
+  document.getElementById('dash-dist').innerHTML = `
+    <div class="dist-box">
+      <div class="dist-person juan">
+        <div>
+          <div class="name">${c.socio1Nombre} <span class="badge badge-blue">${c.socio1Pct}%</span></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Adelantos: ${fmt(calcAdelantosSocio('juan'))}</div>
+        </div>
+        <div class="amount">${fmt(calcTotalAPagar('juan'))}</div>
+      </div>
+      <div class="dist-person emi">
+        <div>
+          <div class="name">${c.socio2Nombre} <span class="badge badge-orange">${c.socio2Pct}%</span></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Adelantos: ${fmt(calcAdelantosSocio('emi'))}</div>
+        </div>
+        <div class="amount">${fmt(calcTotalAPagar('emi'))}</div>
+      </div>
+    </div>`;
+}
+
+// ─────────────────────────────────────────────────────
+// 10. VENTAS POR DÍA
+// ─────────────────────────────────────────────────────
+function renderVentas() {
+  const total  = calcTotalVentas();
+  const totalB = calcTotalBurgers();
+  const tbody  = document.getElementById('ventas-tbody');
+
+  tbody.innerHTML = data.ventas.map((v, i) => {
+    const detalleStr = v.pagos && v.pagos.length
+      ? v.pagos.filter(p => p.monto > 0).map(p => `${p.plataforma} ${fmt(p.monto)}`).join(' | ')
+      : '<span class="text-muted">—</span>';
+    return `
+    <tr>
+      <td><strong>${v.dia}</strong></td>
+      <td class="text-muted">${v.fecha ? formatDate(v.fecha) : '—'}</td>
+      <td class="text-green fw-700">${fmt(v.monto)}</td>
+      <td>${(v.burgers || 0).toLocaleString('es-AR')}</td>
+      <td style="font-size:12px;color:var(--muted)">${detalleStr}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:6px;background:var(--card2);border-radius:10px;min-width:60px">
+            <div style="width:${total ? ((v.monto/total)*100).toFixed(1) : 0}%;height:100%;background:var(--accent);border-radius:10px"></div>
+          </div>
+          <span style="font-size:12px;min-width:44px">${pct(v.monto, total)}</span>
+        </div>
+      </td>
+      <td>
+        <button class="btn btn-ghost btn-sm" onclick="editVenta(${i})">✏️</button>
+        <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deleteVenta(${i})">🗑️</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('ventas-total').innerHTML = `
+    <td colspan="2"><strong>TOTAL</strong></td>
+    <td class="text-amber"><strong>${fmt(total)}</strong></td>
+    <td><strong>${totalB.toLocaleString('es-AR')}</strong></td>
+    <td colspan="3"></td>`;
+
+  renderChartVentasFull();
+}
+
+function renderChartVentasFull() {
+  const ctx = document.getElementById('chart-ventas-full');
+  destroyChart('ventas-full');
+  charts['ventas-full'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.ventas.map(v => v.dia),
+      datasets: [
+        { label: 'Ventas ($)', data: data.ventas.map(v => v.monto),
+          backgroundColor: 'rgba(249,115,22,0.75)', borderColor: '#f97316', borderWidth: 2, borderRadius: 6, yAxisID: 'y' },
+        { label: 'Burgers', data: data.ventas.map(v => v.burgers || 0), type: 'line',
+          borderColor: '#fbbf24', backgroundColor: 'rgba(251,191,36,0.15)', borderWidth: 2,
+          pointRadius: 5, pointBackgroundColor: '#fbbf24', tension: 0.4, yAxisID: 'y2' }
+      ]
+    },
+    options: {
+      ...chartOptions('Ventas por Día + Burgers'),
+      scales: {
+        x:  { ticks: { color: '#94a3b8' }, grid: { color: '#2a2a45' } },
+        y:  { ticks: { color: '#94a3b8', callback: v => '$' + v.toLocaleString('es-AR') }, grid: { color: '#2a2a45' }, position: 'left' },
+        y2: { ticks: { color: '#fbbf24' }, grid: { drawOnChartArea: false }, position: 'right' },
+      }
+    },
+  });
+}
+
+// ─────────────────────────────────────────────────────
+// 11. MODAL VENTAS — con pagos por plataforma
+// ─────────────────────────────────────────────────────
+function openAddVentaModal() {
+  document.getElementById('venta-edit-index').value = -1;
+  document.getElementById('venta-dia').value        = '';
+  document.getElementById('venta-fecha').value      = new Date().toISOString().split('T')[0];
+  document.getElementById('venta-burgers').value    = '';
+  const pagos = data.config.plataformas.map(p => ({ plataforma: p, monto: 0 }));
+  renderVentaPagosRows(pagos);
+  openModal('modal-venta');
+}
+
+function editVenta(i) {
+  const v = data.ventas[i];
+  document.getElementById('venta-edit-index').value = i;
+  document.getElementById('venta-dia').value        = v.dia;
+  document.getElementById('venta-fecha').value      = v.fecha || '';
+  document.getElementById('venta-burgers').value    = v.burgers || '';
+  const pagos = (v.pagos && v.pagos.length)
+    ? v.pagos
+    : data.config.plataformas.map(p => ({ plataforma: p, monto: 0 }));
+  renderVentaPagosRows(pagos);
+  openModal('modal-venta');
+}
+
+function renderVentaPagosRows(pagos) {
+  const container = document.getElementById('venta-pagos-list');
+  container.innerHTML = pagos.map((p) => `
+    <div class="plat-row">
+      <input type="text" class="pago-row-input venta-pago-plat" value="${esc(p.plataforma)}" placeholder="Plataforma" style="flex:1" />
+      <input type="number" class="pago-row-input venta-pago-monto" value="${p.monto || ''}" placeholder="$0"
+        style="width:130px" oninput="recalcVentaTotal()" />
+      <button onclick="removeVentaPagoRow(this)"
+        style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:4px 6px;line-height:1">×</button>
+    </div>`).join('');
+  recalcVentaTotal();
+}
+
+function addVentaPagoRow() {
+  const container = document.getElementById('venta-pagos-list');
+  const div = document.createElement('div');
+  div.className = 'plat-row';
+  div.innerHTML = `
+    <input type="text" class="pago-row-input venta-pago-plat" placeholder="Plataforma" style="flex:1" />
+    <input type="number" class="pago-row-input venta-pago-monto" placeholder="$0"
+      style="width:130px" oninput="recalcVentaTotal()" />
+    <button onclick="removeVentaPagoRow(this)"
+      style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:4px 6px;line-height:1">×</button>`;
+  container.appendChild(div);
+}
+
+function removeVentaPagoRow(btn) {
+  btn.closest('.plat-row').remove();
+  recalcVentaTotal();
+}
+
+function recalcVentaTotal() {
+  const total = [...document.querySelectorAll('.venta-pago-monto')]
+    .reduce((s, inp) => s + (parseFloat(inp.value) || 0), 0);
+  document.getElementById('venta-total-display').value = fmt(total);
+}
+
+function saveVenta() {
+  const idx     = parseInt(document.getElementById('venta-edit-index').value);
+  const dia     = document.getElementById('venta-dia').value.trim();
+  const fecha   = document.getElementById('venta-fecha').value;
+  const burgers = parseInt(document.getElementById('venta-burgers').value) || 0;
+  if (!dia) return;
+
+  const rows  = document.querySelectorAll('.plat-row');
+  const pagos = [];
+  rows.forEach(row => {
+    const plat  = row.querySelector('.venta-pago-plat').value.trim();
+    const monto = parseFloat(row.querySelector('.venta-pago-monto').value) || 0;
+    if (plat) pagos.push({ plataforma: plat, monto });
+  });
+
+  const monto = pagos.reduce((s, p) => s + p.monto, 0);
+  const entry = { dia, fecha, monto, burgers, pagos };
+
+  if (idx >= 0) data.ventas[idx] = entry;
+  else          data.ventas.push(entry);
+
+  data.balance.ventas = data.ventas.reduce((s, v) => s + v.monto, 0);
+  closeModal('modal-venta');
+  saveData();
+  renderVentas();
+}
+
+function deleteVenta(i) {
+  if (!confirm('¿Eliminar este día?')) return;
+  data.ventas.splice(i, 1);
+  data.balance.ventas = data.ventas.reduce((s, v) => s + v.monto, 0);
+  saveData();
+  renderVentas();
+}
+
+// ─────────────────────────────────────────────────────
+// 12. PRODUCTOS
+// ─────────────────────────────────────────────────────
+const PRODUCTOS_CONFIG = [
+  { key: 'burgers', label: '🍔 Burgers',  color: '#f97316' },
+  { key: 'dips',    label: '🥫 Dips',     color: '#10b981' },
+  { key: 'papas',   label: '🍟 Papas',    color: '#fbbf24' },
+  { key: 'nuggets', label: '🥖 Nuggets',  color: '#6366f1' },
+  { key: 'aros',    label: '🧅 Aros',     color: '#ec4899' },
+  { key: 'helados', label: '🍦 Helados',  color: '#38bdf8' },
+  { key: 'bebidas', label: '🥤 Bebidas',  color: '#a78bfa' },
+];
+
+function renderProductos() {
+  document.getElementById('productos-form').innerHTML = PRODUCTOS_CONFIG.map(p => `
+    <div class="form-group">
+      <label>${p.label}</label>
+      <input type="number" id="prod-${p.key}" value="${data.productos[p.key] || 0}" min="0" />
+    </div>`).join('');
+  renderChartProductos();
+}
+
+function saveProductos() {
+  PRODUCTOS_CONFIG.forEach(p => {
+    data.productos[p.key] = parseInt(document.getElementById('prod-' + p.key).value) || 0;
+  });
+  saveData();
+}
+
+function renderChartProductos() {
+  const ctx = document.getElementById('chart-productos');
+  destroyChart('productos');
+  charts['productos'] = new Chart(ctx, {
+    type: 'polarArea',
+    data: {
+      labels: PRODUCTOS_CONFIG.map(p => p.label),
+      datasets: [{ data: PRODUCTOS_CONFIG.map(p => data.productos[p.key]),
+        backgroundColor: PRODUCTOS_CONFIG.map(p => p.color + 'cc'),
+        borderColor: PRODUCTOS_CONFIG.map(p => p.color), borderWidth: 2 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#e2e8f0', font: { size: 12 } } },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw.toLocaleString('es-AR')} unidades` } }
+      },
+      scales: { r: { ticks: { color: '#94a3b8', backdropColor: 'transparent' }, grid: { color: '#2a2a45' } } }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────
+// 13. FORMAS DE PAGO (solo lectura, auto-calculado)
+// ─────────────────────────────────────────────────────
+function renderPagos() {
+  const pagos  = calcPagosConsolidados();
+  const total  = calcTotalPagos();
+  const COLORS = ['#10b981','#6366f1','#f97316','#fbbf24','#ec4899','#38bdf8'];
+
+  document.getElementById('pagos-tbody').innerHTML = pagos.map((p, i) => `
+    <tr>
+      <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${COLORS[i%COLORS.length]};margin-right:8px"></span>${esc(p.nombre)}</td>
+      <td class="fw-700">${fmt(p.monto)}</td>
+      <td>${pct(p.monto, total)}</td>
+    </tr>`).join('');
+
+  document.getElementById('pagos-total').innerHTML = `
+    <td colspan="1"><strong>TOTAL</strong></td>
+    <td><strong>${fmt(total)}</strong></td>
+    <td><strong>100,00%</strong></td>`;
+
+  document.getElementById('pagos-progress').innerHTML = pagos.map((p, i) => `
+    <div class="progress-wrap">
+      <div class="progress-label">
+        <span>${esc(p.nombre)}</span>
+        <span>${fmt(p.monto)} · ${pct(p.monto, total)}</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" style="width:${total ? ((p.monto/total)*100).toFixed(1) : 0}%;background:${COLORS[i%COLORS.length]}"></div>
+      </div>
+    </div>`).join('');
+
+  renderChartPagosFull(pagos, total);
+}
+
+function renderChartPagosFull(pagos, total) {
+  ['pagos-full','pagos-dash'].forEach(k => destroyChart(k));
+  const colors = ['#10b981','#6366f1','#f97316','#fbbf24','#ec4899','#38bdf8'];
+
+  const makeChart = (id) => {
+    const ctx = document.getElementById('chart-' + id);
+    if (!ctx) return;
+    charts[id] = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: pagos.map(p => p.nombre),
+        datasets: [{ data: pagos.map(p => p.monto),
+          backgroundColor: colors, borderColor: '#1a1a2e', borderWidth: 3 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#e2e8f0', font: { size: 12 } }, position: 'bottom' },
+          tooltip: { callbacks: { label: (c) => ` ${c.label}: ${fmt(c.raw)} (${pct(c.raw, total)})` } }
+        },
+        cutout: '65%',
+      }
+    });
+  };
+  makeChart('pagos-full');
+  makeChart('pagos-dash');
+}
+
+// ─────────────────────────────────────────────────────
+// 14. BALANCE
+// ─────────────────────────────────────────────────────
+function renderBalance() {
+  syncAutoBalances();
+  const b = data.balance;
+
+  document.getElementById('balance-panel-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:20px">
+      <div class="auto-row" style="flex-direction:column;align-items:flex-start">
+        <div class="auto-row-label">💰 Ingresos del Mes</div>
+        <div class="auto-row-value text-green">${fmt(b.ventas)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Suma de ventas diarias</div>
+      </div>
+      <div class="auto-row" style="flex-direction:column;align-items:flex-start">
+        <div class="auto-row-label">📦 Gastos Generales</div>
+        <div class="auto-row-value text-red">${fmt(b.compras)}</div>
+        <div style="font-size:11px;margin-top:4px"><button class="link-btn" onclick="navigateTo('gastosg')">Ver detalle →</button></div>
+      </div>
+      <div class="auto-row" style="flex-direction:column;align-items:flex-start">
+        <div class="auto-row-label">🧾 Gastos Fijos</div>
+        <div class="auto-row-value text-red">${fmt(b.gastosFijos)}</div>
+        <div style="font-size:11px;margin-top:4px"><button class="link-btn" onclick="navigateTo('gastosf')">Ver detalle →</button></div>
+      </div>
+    </div>
+    <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr))">
+      <div class="form-group">
+        <label>👤 Sueldos ($)</label>
+        <input type="number" id="bal-sueldos" value="${b.sueldos || 0}" min="0" />
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveBalance()">💾 Guardar</button>
+    </div>`;
+
+  renderChartBalance();
+  renderBalanceResumen();
+}
+
+function saveBalance() {
+  data.balance.sueldos = parseFloat(document.getElementById('bal-sueldos').value) || 0;
+  saveData();
+  renderBalance();
+}
+
+function renderChartBalance() {
+  const ctx = document.getElementById('chart-balance');
+  destroyChart('balance');
+  const b = data.balance;
+  charts['balance'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['Gastos Generales', 'Gastos Fijos', 'Sueldos', 'Ganancia Neta'],
+      datasets: [{ label: 'Monto ($)',
+        data: [b.compras, b.gastosFijos, b.sueldos, calcGananciaNeta()],
+        backgroundColor: ['#ef4444cc','#f97316cc','#fbbf24cc','#10b981cc'],
+        borderColor:     ['#ef4444',  '#f97316',  '#fbbf24',  '#10b981'],
+        borderWidth: 2, borderRadius: 6 }]
+    },
+    options: chartOptions('Composición'),
+  });
+}
+
+function renderBalanceResumen() {
+  const neta = calcGananciaNeta();
+  const fc   = calcFondoComun();
+  const dist = calcGananciaDistribuir();
+
+  document.getElementById('balance-resumen').innerHTML = `
+    <div class="three-col">
+      <div style="text-align:center;padding:16px;background:var(--card2);border-radius:10px;border:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Ganancia Neta</div>
+        <div style="font-size:26px;font-weight:800;color:${neta>=0?'var(--green)':'var(--red)'}">${fmt(neta)}</div>
+      </div>
+      <div style="text-align:center;padding:16px;background:var(--card2);border-radius:10px;border:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Fondo Común (${data.config.pctFondoComun}%)</div>
+        <div style="font-size:26px;font-weight:800;color:var(--blue)">${fmt(fc)}</div>
+      </div>
+      <div style="text-align:center;padding:16px;background:var(--card2);border-radius:10px;border:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">A Distribuir</div>
+        <div style="font-size:26px;font-weight:800;color:var(--accent2)">${fmt(dist)}</div>
+      </div>
+    </div>`;
+}
+
+// ─────────────────────────────────────────────────────
+// 15. GASTOS FIJOS
+// ─────────────────────────────────────────────────────
+function renderGastosFijos() {
+  const total = data.gastosFijosDetalle.reduce((s, g) => s + g.monto, 0);
+
+  document.getElementById('gastosf-kpis').innerHTML = `
+    <div class="kpi-card red">
+      <div class="kpi-icon">🧾</div>
+      <div class="kpi-label">Total Gastos Fijos</div>
+      <div class="kpi-value">${fmt(total)}</div>
+      <div class="kpi-sub">${data.gastosFijosDetalle.length} ítems</div>
+    </div>`;
+
+  document.getElementById('gastosf-tbody').innerHTML = data.gastosFijosDetalle.map((g, i) => `
+    <tr>
+      <td>${esc(g.nombre)}</td>
+      <td class="text-red fw-700">${fmt(g.monto)}</td>
+      <td>
+        <button class="btn btn-ghost btn-sm" onclick="editGastoFijo(${i})">✏️</button>
+        <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deleteGastoFijo(${i})">🗑️</button>
+      </td>
+    </tr>`).join('');
+
+  document.getElementById('gastosf-total').innerHTML = `
+    <td><strong>TOTAL</strong></td>
+    <td><strong class="text-amber">${fmt(total)}</strong></td>
+    <td></td>`;
+}
+
+function openAddGastoFijoModal() {
+  document.getElementById('gf-edit-index').value = -1;
+  document.getElementById('gf-nombre').value     = '';
+  document.getElementById('gf-monto').value      = '';
+  openModal('modal-gastosf');
+}
+
+function editGastoFijo(i) {
+  const g = data.gastosFijosDetalle[i];
+  document.getElementById('gf-edit-index').value = i;
+  document.getElementById('gf-nombre').value     = g.nombre;
+  document.getElementById('gf-monto').value      = g.monto;
+  openModal('modal-gastosf');
+}
+
+function saveGastoFijo() {
+  const idx    = parseInt(document.getElementById('gf-edit-index').value);
+  const nombre = document.getElementById('gf-nombre').value.trim();
+  const monto  = parseFloat(document.getElementById('gf-monto').value) || 0;
+  if (!nombre) return;
+  if (idx >= 0) data.gastosFijosDetalle[idx] = { nombre, monto };
+  else          data.gastosFijosDetalle.push({ nombre, monto });
+  data.balance.gastosFijos = data.gastosFijosDetalle.reduce((s, g) => s + g.monto, 0);
+  closeModal('modal-gastosf');
+  saveData();
+  renderGastosFijos();
+}
+
+function deleteGastoFijo(i) {
+  if (!confirm('¿Eliminar este gasto?')) return;
+  data.gastosFijosDetalle.splice(i, 1);
+  data.balance.gastosFijos = data.gastosFijosDetalle.reduce((s, g) => s + g.monto, 0);
+  saveData();
+  renderGastosFijos();
+}
+
+// ─────────────────────────────────────────────────────
+// 16. GASTOS GENERALES
+// ─────────────────────────────────────────────────────
+function renderGastosGenerales() {
+  const total = data.gastosGenerales.reduce((s, g) => s + g.monto, 0);
+
+  const bycat = {};
+  CATEGORIAS_GG.forEach(c => { bycat[c] = 0; });
+  data.gastosGenerales.forEach(g => { bycat[g.categoria] = (bycat[g.categoria] || 0) + g.monto; });
+
+  document.getElementById('gastosg-kpis').innerHTML = `
+    <div class="kpi-card red">
+      <div class="kpi-icon">📦</div>
+      <div class="kpi-label">Total Gastos Generales</div>
+      <div class="kpi-value">${fmt(total)}</div>
+      <div class="kpi-sub">${data.gastosGenerales.length} ítems</div>
+    </div>
+    ${CATEGORIAS_GG.map(c => `
+    <div class="kpi-card">
+      <div class="kpi-icon">📋</div>
+      <div class="kpi-label">${c}</div>
+      <div class="kpi-value" style="font-size:18px">${fmt(bycat[c])}</div>
+      <div class="kpi-sub">${pct(bycat[c], total)} del total</div>
+    </div>`).join('')}`;
+
+  const filterBar = document.getElementById('gastosg-filters');
+  if (filterBar) {
+    const cats = ['Todos', ...CATEGORIAS_GG];
+    filterBar.innerHTML = cats.map(c => `
+      <button class="filter-btn ${currentGastosGFilter === c ? 'active' : ''}" data-cat="${c}" onclick="setGastosGFilter('${c}')">${c}</button>`
+    ).join('');
+  }
+
+  renderGastosGeneralesTable();
+  renderChartGastosG(bycat, total);
+  renderGastosGSubtotales(bycat, total);
+}
+
+function setGastosGFilter(cat) {
+  currentGastosGFilter = cat;
+  document.querySelectorAll('.filter-btn[data-cat]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.cat === cat);
+  });
+  renderGastosGeneralesTable();
+}
+
+function renderGastosGeneralesTable() {
+  const filtered = currentGastosGFilter === 'Todos'
+    ? data.gastosGenerales
+    : data.gastosGenerales.filter(g => g.categoria === currentGastosGFilter);
+  const total = filtered.reduce((s, g) => s + g.monto, 0);
+
+  document.getElementById('gastosg-tbody').innerHTML = filtered.map((g, i) => {
+    const realI = data.gastosGenerales.indexOf(g);
+    return `<tr>
+      <td>${g.fecha ? formatDate(g.fecha) : '—'}</td>
+      <td>${esc(g.nombre)}</td>
+      <td><span class="badge badge-orange" style="background:${CAT_COLORS[g.categoria]}22;color:${CAT_COLORS[g.categoria]}">${g.categoria}</span></td>
+      <td class="text-red fw-700">${fmt(g.monto)}</td>
+      <td>
+        <button class="btn btn-ghost btn-sm" onclick="editGastoG(${realI})">✏️</button>
+        <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deleteGastoG(${realI})">🗑️</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('gastosg-total').innerHTML = `
+    <td colspan="3"><strong>TOTAL ${currentGastosGFilter !== 'Todos' ? '(' + currentGastosGFilter + ')' : ''}</strong></td>
+    <td><strong class="text-amber">${fmt(total)}</strong></td>
+    <td></td>`;
+}
+
+function renderChartGastosG(bycat, total) {
+  const ctx = document.getElementById('chart-gastosg');
+  if (!ctx) return;
+  destroyChart('gastosg');
+  const cats   = CATEGORIAS_GG.filter(c => bycat[c] > 0);
+  const values = cats.map(c => bycat[c]);
+  const colors = cats.map(c => CAT_COLORS[c]);
+  if (!values.length) return;
+  charts['gastosg'] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: cats,
+      datasets: [{ data: values, backgroundColor: colors.map(c => c + 'cc'), borderColor: colors, borderWidth: 2 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#e2e8f0', font: { size: 12 } }, position: 'bottom' },
+        tooltip: { callbacks: { label: (c) => ` ${c.label}: ${fmt(c.raw)} (${pct(c.raw, total)})` } }
+      },
+      cutout: '60%',
+    }
+  });
+}
+
+function renderGastosGSubtotales(bycat, total) {
+  const el = document.getElementById('gastosg-subtotales');
+  if (!el) return;
+  el.innerHTML = CATEGORIAS_GG.map(c => `
+    <div class="progress-wrap">
+      <div class="progress-label">
+        <span style="color:${CAT_COLORS[c]}">${c}</span>
+        <span>${fmt(bycat[c])} · ${pct(bycat[c], total)}</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" style="width:${total ? ((bycat[c]/total)*100).toFixed(1) : 0}%;background:${CAT_COLORS[c]}"></div>
+      </div>
+    </div>`).join('');
+}
+
+function openAddGastoGModal() {
+  document.getElementById('gg-edit-index').value = -1;
+  document.getElementById('gg-fecha').value      = new Date().toISOString().split('T')[0];
+  document.getElementById('gg-nombre').value     = '';
+  document.getElementById('gg-categoria').value  = 'Insumos';
+  document.getElementById('gg-monto').value      = '';
+  openModal('modal-gastosg');
+}
+
+function editGastoG(i) {
+  const g = data.gastosGenerales[i];
+  document.getElementById('gg-edit-index').value = i;
+  document.getElementById('gg-fecha').value      = g.fecha || '';
+  document.getElementById('gg-nombre').value     = g.nombre;
+  document.getElementById('gg-categoria').value  = g.categoria;
+  document.getElementById('gg-monto').value      = g.monto;
+  openModal('modal-gastosg');
+}
+
+function saveGastoG() {
+  const idx       = parseInt(document.getElementById('gg-edit-index').value);
+  const fecha     = document.getElementById('gg-fecha').value;
+  const nombre    = document.getElementById('gg-nombre').value.trim();
+  const categoria = document.getElementById('gg-categoria').value;
+  const monto     = parseFloat(document.getElementById('gg-monto').value) || 0;
+  if (!nombre) return;
+  if (idx >= 0) data.gastosGenerales[idx] = { fecha, nombre, monto, categoria };
+  else          data.gastosGenerales.push({ fecha, nombre, monto, categoria });
+  data.balance.compras = data.gastosGenerales.reduce((s, g) => s + g.monto, 0);
+  closeModal('modal-gastosg');
+  saveData();
+  renderGastosGenerales();
+}
+
+function deleteGastoG(i) {
+  if (!confirm('¿Eliminar este gasto?')) return;
+  data.gastosGenerales.splice(i, 1);
+  data.balance.compras = data.gastosGenerales.reduce((s, g) => s + g.monto, 0);
+  saveData();
+  renderGastosGenerales();
+}
+
+// ─────────────────────────────────────────────────────
+// 17. DISTRIBUCIÓN (con egresos de ganancia)
+// ─────────────────────────────────────────────────────
+function renderDistribucion() {
+  renderDistCalculo();
+  renderEgresos();
+  renderAdelantos();
+  renderDistTotales();
+}
+
+function renderDistCalculo() {
+  const c      = data.config;
+  const neta   = calcGananciaNeta();
+  const fc     = calcFondoComun();
+  const egr    = calcTotalEgresos();
+  const dist   = calcGananciaDistribuir();
+  const j      = calcParteSocio('juan');
+  const e      = calcParteSocio('emi');
+
+  document.getElementById('dist-calculo').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+      <div>
+        <table>
+          <thead><tr><th>Concepto</th><th class="align-right">Monto</th></tr></thead>
+          <tbody>
+            <tr><td>💰 Ingresos del Mes</td><td class="align-right text-green fw-700">${fmt(data.balance.ventas)}</td></tr>
+            <tr><td>📦 Gastos Generales</td><td class="align-right text-red">${fmt(data.balance.compras)}</td></tr>
+            <tr><td>🧾 Gastos Fijos</td><td class="align-right text-red">${fmt(data.balance.gastosFijos)}</td></tr>
+            <tr><td>👤 Sueldos</td><td class="align-right text-red">${fmt(data.balance.sueldos)}</td></tr>
+            <tr class="total-row"><td>📊 Ganancia Neta</td><td class="align-right">${fmt(neta)}</td></tr>
+            <tr><td>🏦 Fondo Común (${c.pctFondoComun}%)</td><td class="align-right text-muted">- ${fmt(fc)}</td></tr>
+            <tr><td>💸 Egresos de Ganancias</td><td class="align-right text-red">- ${fmt(egr)}</td></tr>
+            <tr class="total-row"><td>🎯 A Distribuir</td><td class="align-right">${fmt(dist)}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <table>
+          <thead><tr><th>Socio</th><th>%</th><th class="align-right">Parte Bruta</th></tr></thead>
+          <tbody>
+            <tr><td><strong>${c.socio1Nombre}</strong></td><td>${c.socio1Pct}%</td><td class="align-right text-blue fw-700">${fmt(j)}</td></tr>
+            <tr><td><strong>${c.socio2Nombre}</strong></td><td>${c.socio2Pct}%</td><td class="align-right fw-700" style="color:#ec4899">${fmt(e)}</td></tr>
+          </tbody>
+        </table>
+        <div class="divider"></div>
+        <div class="progress-wrap">
+          <div class="progress-label"><span>${c.socio1Nombre}</span><span>${c.socio1Pct}%</span></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:${c.socio1Pct}%;background:var(--blue)"></div></div>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-label"><span>${c.socio2Nombre}</span><span>${c.socio2Pct}%</span></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:${c.socio2Pct}%;background:#ec4899"></div></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ─────────────────────────────────────────────────────
+// 18. EGRESOS DE GANANCIA
+// ─────────────────────────────────────────────────────
+function renderEgresos() {
+  const total = calcTotalEgresos();
+  const tbody = document.getElementById('egresos-tbody');
+  tbody.innerHTML = (data.egresosGanancia || []).map((e, i) => `
+    <tr>
+      <td>${e.fecha ? formatDate(e.fecha) : '—'}</td>
+      <td>${esc(e.detalle)}</td>
+      <td class="text-red fw-700">${fmt(e.monto)}</td>
+      <td>
+        <button class="btn btn-ghost btn-sm" onclick="editEgreso(${i})">✏️</button>
+        <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deleteEgreso(${i})">🗑️</button>
+      </td>
+    </tr>`).join('');
+
+  document.getElementById('egresos-total').innerHTML = `
+    <td colspan="2"><strong>TOTAL EGRESOS</strong></td>
+    <td><strong class="text-red">${fmt(total)}</strong></td>
+    <td></td>`;
+}
+
+function openAddEgresoModal() {
+  document.getElementById('egreso-edit-index').value = -1;
+  document.getElementById('egreso-fecha').value      = new Date().toISOString().split('T')[0];
+  document.getElementById('egreso-monto').value      = '';
+  document.getElementById('egreso-detalle').value    = '';
+  openModal('modal-egreso');
+}
+
+function editEgreso(i) {
+  const e = data.egresosGanancia[i];
+  document.getElementById('egreso-edit-index').value = i;
+  document.getElementById('egreso-fecha').value      = e.fecha || '';
+  document.getElementById('egreso-monto').value      = e.monto;
+  document.getElementById('egreso-detalle').value    = e.detalle;
+  openModal('modal-egreso');
+}
+
+function saveEgreso() {
+  const idx     = parseInt(document.getElementById('egreso-edit-index').value);
+  const fecha   = document.getElementById('egreso-fecha').value;
+  const monto   = parseFloat(document.getElementById('egreso-monto').value) || 0;
+  const detalle = document.getElementById('egreso-detalle').value.trim();
+  if (!monto) return;
+  const entry = { fecha, monto, detalle };
+  if (idx >= 0) data.egresosGanancia[idx] = entry;
+  else          data.egresosGanancia.push(entry);
+  closeModal('modal-egreso');
+  saveData();
+  renderDistribucion();
+}
+
+function deleteEgreso(i) {
+  if (!confirm('¿Eliminar este egreso?')) return;
+  data.egresosGanancia.splice(i, 1);
+  saveData();
+  renderDistribucion();
+}
+
+// ─────────────────────────────────────────────────────
+// 19. ADELANTOS
+// ─────────────────────────────────────────────────────
+function renderAdelantos() {
+  const c     = data.config;
+  const tbody = document.getElementById('adelantos-tbody');
+  tbody.innerHTML = data.adelantos.map((a, i) => `
+    <tr>
+      <td><span class="badge ${a.persona==='juan'?'badge-blue':'badge-orange'}">${a.persona==='juan'?c.socio1Nombre:c.socio2Nombre}</span></td>
+      <td class="text-red fw-700">${fmt(a.monto)}</td>
+      <td class="text-muted">${a.nota||'—'}</td>
+      <td>
+        <button class="btn btn-danger btn-sm" onclick="deleteAdelanto(${i})">🗑️</button>
+      </td>
+    </tr>`).join('');
+
+  const totalAd = data.adelantos.reduce((s, a) => s + a.monto, 0);
+  document.getElementById('adelantos-total').innerHTML = `
+    <td><strong>TOTAL</strong></td>
+    <td><strong class="text-red">${fmt(totalAd)}</strong></td>
+    <td colspan="2"></td>`;
+}
+
+function renderDistTotales() {
+  const c = data.config;
+  document.getElementById('dist-totales').innerHTML = `
+    <div class="dist-box">
+      ${distPersonaRow('juan', c.socio1Nombre, 'juan')}
+      ${distPersonaRow('emi',  c.socio2Nombre, 'emi')}
+    </div>`;
+}
+
+function distPersonaRow(key, nombre, cls) {
+  const bruta    = calcParteSocio(key);
+  const adelanto = calcAdelantosSocio(key);
+  const total    = calcTotalAPagar(key);
+  return `
+    <div class="dist-person ${cls}">
+      <div>
+        <div class="name">${nombre}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">
+          Bruta: ${fmt(bruta)} · Adelantos: ${fmt(adelanto)}
+        </div>
+      </div>
+      <div>
+        <div class="amount">${fmt(total)}</div>
+        <div style="font-size:11px;color:var(--muted);text-align:right;margin-top:2px">TOTAL A PAGAR</div>
+      </div>
+    </div>`;
+}
+
+function openAddAdelantoModal() {
+  document.getElementById('adelanto-edit-index').value = -1;
+  document.getElementById('adelanto-persona').value    = 'juan';
+  document.getElementById('adelanto-monto').value      = '';
+  document.getElementById('adelanto-nota').value       = '';
+  openModal('modal-adelanto');
+}
+
+function saveAdelanto() {
+  const idx     = parseInt(document.getElementById('adelanto-edit-index').value);
+  const persona = document.getElementById('adelanto-persona').value;
+  const monto   = parseFloat(document.getElementById('adelanto-monto').value) || 0;
+  const nota    = document.getElementById('adelanto-nota').value.trim();
+  if (!monto) return;
+  if (idx >= 0) data.adelantos[idx] = { persona, monto, nota };
+  else          data.adelantos.push({ persona, monto, nota });
+  closeModal('modal-adelanto');
+  saveData();
+  renderDistribucion();
+}
+
+function deleteAdelanto(i) {
+  if (!confirm('¿Eliminar este adelanto?')) return;
+  data.adelantos.splice(i, 1);
+  saveData();
+  renderDistribucion();
+}
+
+// ─────────────────────────────────────────────────────
+// 20. FONDO COMÚN
+// ─────────────────────────────────────────────────────
+function renderFondoComun() {
+  const saldo    = calcSaldoFondoComun();
+  const ingresos = data.fondoComun.filter(m => m.tipo==='Ingreso').reduce((s,m) => s+m.monto, 0);
+  const egresos  = data.fondoComun.filter(m => m.tipo==='Egreso').reduce((s,m) => s+m.monto, 0);
+
+  document.getElementById('fc-kpis').innerHTML = `
+    <div class="kpi-card green">
+      <div class="kpi-icon">💹</div>
+      <div class="kpi-label">Total Ingresos</div>
+      <div class="kpi-value">${fmt(ingresos)}</div>
+      <div class="kpi-sub">${data.fondoComun.filter(m=>m.tipo==='Ingreso').length} movimientos</div>
+    </div>
+    <div class="kpi-card red">
+      <div class="kpi-icon">📉</div>
+      <div class="kpi-label">Total Egresos</div>
+      <div class="kpi-value">${fmt(egresos)}</div>
+      <div class="kpi-sub">${data.fondoComun.filter(m=>m.tipo==='Egreso').length} movimientos</div>
+    </div>
+    <div class="kpi-card ${saldo>=0?'green':'red'}">
+      <div class="kpi-icon">🏦</div>
+      <div class="kpi-label">Saldo Actual</div>
+      <div class="kpi-value">${fmt(saldo)}</div>
+      <div class="kpi-sub">${data.fondoComun.length} movimientos total</div>
+    </div>`;
+
+  const tbody = document.getElementById('fc-tbody');
+  tbody.innerHTML = [...data.fondoComun].reverse().map((m, ri) => {
+    const i = data.fondoComun.length - 1 - ri;
+    const isIng = m.tipo === 'Ingreso';
+    return `
+      <tr class="${isIng?'fc-row-ingreso':'fc-row-egreso'}">
+        <td>${formatDate(m.fecha)}</td>
+        <td><span class="badge ${isIng?'badge-green':'badge-red'}">${m.tipo}</span></td>
+        <td class="${isIng?'text-green':'text-red'} fw-700">${isIng?'+':'-'} ${fmt(m.monto)}</td>
+        <td class="text-muted">${m.detalle||'—'}</td>
+        <td>
+          <button class="btn btn-ghost btn-sm" onclick="editFC(${i})">✏️</button>
+          <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deleteFC(${i})">🗑️</button>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function openAddFCModal() {
+  document.getElementById('fc-edit-index').value = -1;
+  document.getElementById('fc-fecha').value      = new Date().toISOString().split('T')[0];
+  document.getElementById('fc-tipo').value       = 'Ingreso';
+  document.getElementById('fc-monto').value      = '';
+  document.getElementById('fc-detalle').value    = '';
+  openModal('modal-fc');
+}
+
+function editFC(i) {
+  const m = data.fondoComun[i];
+  document.getElementById('fc-edit-index').value = i;
+  document.getElementById('fc-fecha').value      = m.fecha;
+  document.getElementById('fc-tipo').value       = m.tipo;
+  document.getElementById('fc-monto').value      = m.monto;
+  document.getElementById('fc-detalle').value    = m.detalle;
+  openModal('modal-fc');
+}
+
+function saveFC() {
+  const idx     = parseInt(document.getElementById('fc-edit-index').value);
+  const fecha   = document.getElementById('fc-fecha').value;
+  const tipo    = document.getElementById('fc-tipo').value;
+  const monto   = parseFloat(document.getElementById('fc-monto').value) || 0;
+  const detalle = document.getElementById('fc-detalle').value.trim();
+  if (!monto) return;
+  const entry = { fecha, tipo, monto, detalle };
+  if (idx >= 0) data.fondoComun[idx] = entry;
+  else          data.fondoComun.push(entry);
+  closeModal('modal-fc');
+  saveData();
+  renderFondoComun();
+}
+
+function deleteFC(i) {
+  if (!confirm('¿Eliminar este movimiento?')) return;
+  data.fondoComun.splice(i, 1);
+  saveData();
+  renderFondoComun();
+}
+
+// ─────────────────────────────────────────────────────
+// 21. RESUMEN DEL MES
+// ─────────────────────────────────────────────────────
+function renderResumen() {
+  syncAutoBalances();
+  renderResumenKPIs();
+  renderResumenActividad();
+  renderResumenPagos();
+  renderResumenFlujo();
+  renderResumenDist();
+  renderResumenComparativa();
+}
+
+function renderResumenKPIs() {
+  const neta  = calcGananciaNeta();
+  const dist  = calcGananciaDistribuir();
+  const pagos = calcPagosConsolidados();
+  const totalPagos = calcTotalPagos();
+
+  document.getElementById('resumen-kpis').innerHTML = `
+    <div class="kpi-card green">
+      <div class="kpi-icon">💰</div>
+      <div class="kpi-label">Total Recaudado</div>
+      <div class="kpi-value">${fmt(data.balance.ventas)}</div>
+      <div class="kpi-sub">${data.ventas.length} días trabajados</div>
+    </div>
+    <div class="kpi-card ${neta>=0?'green':'red'}">
+      <div class="kpi-icon">📊</div>
+      <div class="kpi-label">Ganancia Neta</div>
+      <div class="kpi-value">${fmt(neta)}</div>
+      <div class="kpi-sub">Margen: ${pct(neta, data.balance.ventas)}</div>
+    </div>
+    <div class="kpi-card blue">
+      <div class="kpi-icon">🎯</div>
+      <div class="kpi-label">A Distribuir</div>
+      <div class="kpi-value">${fmt(dist)}</div>
+      <div class="kpi-sub">FC: ${fmt(calcFondoComun())}</div>
+    </div>
+    <div class="kpi-card amber">
+      <div class="kpi-icon">🍔</div>
+      <div class="kpi-label">Total Burgers</div>
+      <div class="kpi-value">${calcTotalBurgers().toLocaleString('es-AR')}</div>
+      <div class="kpi-sub">del mes</div>
+    </div>`;
+}
+
+function renderResumenActividad() {
+  const ventas = data.ventas;
+  if (!ventas.length) {
+    document.getElementById('resumen-actividad').innerHTML = '<p class="text-muted">Sin ventas registradas.</p>';
+    return;
+  }
+  const best    = ventas.reduce((b, v) => v.monto > b.monto ? v : b, ventas[0]);
+  const total   = calcTotalVentas();
+  const avg     = total / ventas.length;
+  const totalB  = calcTotalBurgers();
+  const avgB    = totalB / ventas.length;
+
+  document.getElementById('resumen-actividad').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:12px">
+      ${actRow('📅 Días Trabajados', ventas.length)}
+      ${actRow('🍔 Burgers del Mes', totalB.toLocaleString('es-AR'))}
+      ${actRow('📈 Ticket Promedio / Día', fmt(avg))}
+      ${actRow('🏆 Mejor Día', `${best.dia} — ${fmt(best.monto)}`)}
+      ${actRow('🍔 Prom. Burgers / Día', Math.round(avgB))}
+    </div>`;
+}
+
+function actRow(label, val) {
+  return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+    <span class="text-muted" style="font-size:13px">${label}</span>
+    <span class="fw-700" style="font-size:14px">${val}</span>
+  </div>`;
+}
+
+function renderResumenPagos() {
+  const pagos = calcPagosConsolidados();
+  const total = calcTotalPagos();
+  document.getElementById('resumen-pagos-tbody').innerHTML = pagos.map(p => `
+    <tr>
+      <td>${esc(p.nombre)}</td>
+      <td class="fw-700 text-green">${fmt(p.monto)}</td>
+      <td>${pct(p.monto, total)}</td>
+    </tr>`).join('');
+}
+
+function renderResumenFlujo() {
+  const b    = data.balance;
+  const neta = calcGananciaNeta();
+  const fc   = calcFondoComun();
+  const egr  = calcTotalEgresos();
+  const dist = calcGananciaDistribuir();
+  const c    = data.config;
+  const j    = calcParteSocio('juan');
+  const e    = calcParteSocio('emi');
+  const adjJ = calcAdelantosSocio('juan');
+  const adjE = calcAdelantosSocio('emi');
+
+  document.getElementById('resumen-flujo').innerHTML = `
+    <tbody>
+      <tr><td class="text-muted">💰 Ingresos Brutos</td><td class="align-right text-green fw-700">${fmt(b.ventas)}</td></tr>
+      <tr><td class="text-muted">📦 Gastos Generales</td><td class="align-right text-red">− ${fmt(b.compras)}</td></tr>
+      <tr><td class="text-muted">🧾 Gastos Fijos</td><td class="align-right text-red">− ${fmt(b.gastosFijos)}</td></tr>
+      <tr><td class="text-muted">👤 Sueldos</td><td class="align-right text-red">− ${fmt(b.sueldos)}</td></tr>
+      <tr class="wf-sum"><td>📊 Ganancia Neta</td><td class="align-right">${fmt(neta)}</td></tr>
+      <tr><td class="text-muted">🏦 Fondo Común (${c.pctFondoComun}%)</td><td class="align-right text-muted">− ${fmt(fc)}</td></tr>
+      <tr><td class="text-muted">💸 Egresos de Ganancias</td><td class="align-right text-red">− ${fmt(egr)}</td></tr>
+      <tr class="wf-sum"><td>🎯 Base a Distribuir</td><td class="align-right">${fmt(dist)}</td></tr>
+      <tr><td class="text-muted" style="padding-left:24px">× ${c.socio1Pct}% → ${c.socio1Nombre}</td><td class="align-right text-blue fw-700">${fmt(j)}</td></tr>
+      <tr><td class="text-muted" style="padding-left:24px">× ${c.socio2Pct}% → ${c.socio2Nombre}</td><td class="align-right fw-700" style="color:#ec4899">${fmt(e)}</td></tr>
+      <tr><td class="text-muted" style="padding-left:24px">− Adelantos ${c.socio1Nombre}</td><td class="align-right text-red">− ${fmt(adjJ)}</td></tr>
+      <tr class="wf-sub"><td style="padding-left:24px">✅ TOTAL A PAGAR ${c.socio1Nombre}</td><td class="align-right text-blue fw-700">${fmt(j - adjJ)}</td></tr>
+      <tr><td class="text-muted" style="padding-left:24px">− Adelantos ${c.socio2Nombre}</td><td class="align-right text-red">− ${fmt(adjE)}</td></tr>
+      <tr class="wf-sub"><td style="padding-left:24px">✅ TOTAL A PAGAR ${c.socio2Nombre}</td><td class="align-right fw-700" style="color:#ec4899">${fmt(e - adjE)}</td></tr>
+    </tbody>`;
+}
+
+function renderResumenDist() {
+  const c = data.config;
+  document.getElementById('resumen-dist').innerHTML = `
+    <div class="dist-box">
+      ${distPersonaRow('juan', c.socio1Nombre, 'juan')}
+      ${distPersonaRow('emi',  c.socio2Nombre, 'emi')}
+    </div>`;
+}
+
+function renderResumenComparativa() {
+  const historial = JSON.parse(localStorage.getItem(HISTORIAL_KEY) || '[]');
+  const panel = document.getElementById('resumen-comparativa-panel');
+  if (!historial.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+
+  const ultimos = historial.slice(-6);
+  const labels  = ultimos.map(h => h.mesAnio.replace('_', ' '));
+  const ingresos = ultimos.map(h => h.data.balance?.ventas || 0);
+  const ganancias = ultimos.map(h => {
+    const b = h.data.balance || {};
+    return (b.ventas || 0) - (b.compras || 0) - (b.gastosFijos || 0) - (b.sueldos || 0);
+  });
+
+  const ctx = document.getElementById('chart-comparativa');
+  destroyChart('comparativa');
+  charts['comparativa'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Ingresos', data: ingresos, backgroundColor: 'rgba(16,185,129,.6)', borderColor: '#10b981', borderWidth: 2, borderRadius: 4 },
+        { label: 'Ganancia Neta', data: ganancias, backgroundColor: 'rgba(99,102,241,.6)', borderColor: '#6366f1', borderWidth: 2, borderRadius: 4 },
+      ]
+    },
+    options: chartOptions('Comparativa'),
+  });
+}
+
+// ─────────────────────────────────────────────────────
+// 22. HISTORIAL DE MESES
+// ─────────────────────────────────────────────────────
+function renderHistorial() {
+  const historial = JSON.parse(localStorage.getItem(HISTORIAL_KEY) || '[]');
+  const el        = document.getElementById('historial-list');
+
+  if (!historial.length) {
+    document.getElementById('historial-acumulado').innerHTML = '';
+    el.innerHTML = `<div class="info-box">📭 No hay meses archivados aún. Al hacer "Cerrar Mes" en Configuración, los datos quedan acá.</div>`;
+    return;
+  }
+
+  let totalAcum = 0;
+  const cards = [...historial].reverse().map((h, ri) => {
+    const i = historial.length - 1 - ri;
+    const b = h.data.balance || {};
+    const neta = (b.ventas || 0) - (b.compras || 0) - (b.gastosFijos || 0) - (b.sueldos || 0);
+    totalAcum += neta;
+    const fecha = new Date(h.timestamp).toLocaleDateString('es-AR');
+    return `
+      <div class="historial-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+          <div>
+            <div style="font-size:16px;font-weight:700">${h.mesAnio.replace('_', ' ')}</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px">Archivado: ${fecha}</div>
+          </div>
+          <div style="display:flex;gap:16px;align-items:center">
+            <div style="text-align:center">
+              <div style="font-size:11px;color:var(--muted)">Ingresos</div>
+              <div style="font-size:15px;font-weight:700;color:var(--green)">${fmt(b.ventas||0)}</div>
+            </div>
+            <div style="text-align:center">
+              <div style="font-size:11px;color:var(--muted)">Ganancia Neta</div>
+              <div style="font-size:15px;font-weight:700;color:${neta>=0?'var(--accent2)':'var(--red)'}">${fmt(neta)}</div>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-ghost btn-sm" onclick="verDetalleHistorial(${i})">👁️ Ver</button>
+              <button class="btn btn-ghost btn-sm" onclick="descargarHistorial(${i})">💾 JSON</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  });
+
+  document.getElementById('historial-acumulado').innerHTML = `
+    <div style="padding:14px 18px;background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.2);border-radius:10px;margin-bottom:16px">
+      <span style="font-size:13px;color:var(--muted)">📈 Total acumulado de ganancias netas (${historial.length} meses):</span>
+      <span style="font-size:18px;font-weight:800;color:var(--accent2);margin-left:12px">${fmt(totalAcum)}</span>
+    </div>`;
+
+  el.innerHTML = cards.join('');
+}
+
+function verDetalleHistorial(i) {
+  const historial = JSON.parse(localStorage.getItem(HISTORIAL_KEY) || '[]');
+  const h = historial[i];
+  if (!h) return;
+
+  const b    = h.data.balance || {};
+  const neta = (b.ventas || 0) - (b.compras || 0) - (b.gastosFijos || 0) - (b.sueldos || 0);
+  const c    = h.data.config || {};
+  const fc   = neta * ((c.pctFondoComun || 10) / 100);
+  const egr  = (h.data.egresosGanancia || []).reduce((s, e) => s + e.monto, 0);
+  const dist = neta - fc - egr;
+  const j    = dist * ((c.socio1Pct || 60) / 100);
+  const e    = dist * ((c.socio2Pct || 40) / 100);
+  const adjJ = (h.data.adelantos || []).filter(a => a.persona==='juan').reduce((s,a) => s+a.monto, 0);
+  const adjE = (h.data.adelantos || []).filter(a => a.persona==='emi').reduce((s,a) => s+a.monto, 0);
+
+  document.getElementById('historial-detail-title').textContent = `📅 ${h.mesAnio.replace('_', ' ')}`;
+  document.getElementById('historial-detail-body').innerHTML = `
+    <table class="wf-table" style="margin-bottom:16px">
+      <tbody>
+        <tr><td class="text-muted">💰 Ingresos</td><td class="align-right text-green fw-700">${fmt(b.ventas||0)}</td></tr>
+        <tr><td class="text-muted">📦 Gastos Generales</td><td class="align-right text-red">− ${fmt(b.compras||0)}</td></tr>
+        <tr><td class="text-muted">🧾 Gastos Fijos</td><td class="align-right text-red">− ${fmt(b.gastosFijos||0)}</td></tr>
+        <tr><td class="text-muted">👤 Sueldos</td><td class="align-right text-red">− ${fmt(b.sueldos||0)}</td></tr>
+        <tr class="wf-sum"><td>📊 Ganancia Neta</td><td class="align-right">${fmt(neta)}</td></tr>
+        <tr><td class="text-muted">🏦 Fondo Común (${c.pctFondoComun||10}%)</td><td class="align-right text-muted">− ${fmt(fc)}</td></tr>
+        <tr><td class="text-muted">💸 Egresos de Ganancias</td><td class="align-right text-red">− ${fmt(egr)}</td></tr>
+        <tr class="wf-sum"><td>🎯 A Distribuir</td><td class="align-right">${fmt(dist)}</td></tr>
+        <tr><td>${c.socio1Nombre||'Socio 1'} (${c.socio1Pct||60}%)</td><td class="align-right text-blue fw-700">${fmt(j - adjJ)}</td></tr>
+        <tr><td>${c.socio2Nombre||'Socio 2'} (${c.socio2Pct||40}%)</td><td class="align-right fw-700" style="color:#ec4899">${fmt(e - adjE)}</td></tr>
+      </tbody>
+    </table>
+    <div style="font-size:12px;color:var(--muted)">
+      Días de venta: ${(h.data.ventas||[]).length} ·
+      Burgers: ${(h.data.ventas||[]).reduce((s,v)=>s+(v.burgers||0),0).toLocaleString('es-AR')} ·
+      Fondo Común acumulado: ${fmt(calcSaldoFC(h.data.fondoComun||[]))}
+    </div>`;
+
+  openModal('modal-historial-detail');
+}
+
+function calcSaldoFC(movs) {
+  return movs.reduce((s, m) => m.tipo === 'Ingreso' ? s + m.monto : s - m.monto, 0);
+}
+
+function descargarHistorial(i) {
+  const historial = JSON.parse(localStorage.getItem(HISTORIAL_KEY) || '[]');
+  const h = historial[i];
+  if (!h) return;
+  const blob = new Blob([JSON.stringify(h.data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `PeRez_Burger_${h.mesAnio}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─────────────────────────────────────────────────────
+// 23. CERRAR MES
+// ─────────────────────────────────────────────────────
+function cerrarMes() {
+  const mes  = data.config.mes;
+  const anio = data.config.anio;
+
+  if (!confirm(`¿Cerrar el mes de ${mes} ${anio} y comenzar uno nuevo?\n\nLos datos quedarán guardados en el historial.`)) return;
+
+  // Archivar en historial
+  const historial = JSON.parse(localStorage.getItem(HISTORIAL_KEY) || '[]');
+  historial.push({
+    mesAnio:   `${mes}_${anio}`,
+    timestamp: new Date().toISOString(),
+    data:      JSON.parse(JSON.stringify(data)),
+  });
+  localStorage.setItem(HISTORIAL_KEY, JSON.stringify(historial));
+
+  // Calcular mes siguiente
+  const idxMes = MESES_NAMES.findIndex(m => m.toLowerCase() === mes.toLowerCase());
+  const nextIdx = idxMes === -1 ? 0 : (idxMes + 1) % 12;
+  const nextMes  = MESES_NAMES[nextIdx];
+  const nextAnio = (idxMes === 11) ? anio + 1 : anio;
+
+  // Preguntar sobre gastos fijos
+  const mantenerFijos = data.gastosFijosDetalle.length > 0 &&
+    confirm('¿Mantener los gastos fijos (alquiler, cuotas, etc.) para el mes nuevo?');
+
+  const savedConfig      = { ...data.config, mes: nextMes, anio: nextAnio };
+  const savedGastosFijos = mantenerFijos ? JSON.parse(JSON.stringify(data.gastosFijosDetalle)) : [];
+
+  // Limpiar datos
+  data = {
+    config:            savedConfig,
+    ventas:            [],
+    productos:         { burgers: 0, dips: 0, papas: 0, nuggets: 0, aros: 0, helados: 0, bebidas: 0 },
+    pagos:             [],
+    balance:           {
+      ventas:      0,
+      compras:     0,
+      gastosFijos: mantenerFijos ? savedGastosFijos.reduce((s, g) => s + g.monto, 0) : 0,
+      sueldos:     0,
+    },
+    adelantos:         [],
+    fondoComun:        [],
+    gastosFijosDetalle: savedGastosFijos,
+    gastosGenerales:   [],
+    egresosGanancia:   [],
+  };
+
+  saveData();
+  showToast(`✅ ${mes} ${anio} archivado. Comenzando ${nextMes} ${nextAnio}.`);
+  navigateTo('dashboard');
+}
+
+// ─────────────────────────────────────────────────────
+// 24. CONFIGURACIÓN
+// ─────────────────────────────────────────────────────
+function syncConfigForm() {
+  const c = data.config;
+  document.getElementById('cfg-mes').value       = c.mes;
+  document.getElementById('cfg-anio').value      = c.anio;
+  document.getElementById('cfg-pct-fc').value    = c.pctFondoComun;
+  document.getElementById('cfg-s1-nombre').value = c.socio1Nombre;
+  document.getElementById('cfg-s1-pct').value    = c.socio1Pct;
+  document.getElementById('cfg-s2-nombre').value = c.socio2Nombre;
+  document.getElementById('cfg-s2-pct').value    = c.socio2Pct;
+
+  const sel = document.getElementById('adelanto-persona');
+  if (sel) { sel.options[0].text = c.socio1Nombre; sel.options[1].text = c.socio2Nombre; }
+
+  renderPlataformasConfig();
+}
+
+function saveConfig() {
+  data.config.mes           = document.getElementById('cfg-mes').value.trim()         || data.config.mes;
+  data.config.anio          = parseInt(document.getElementById('cfg-anio').value)     || data.config.anio;
+  data.config.pctFondoComun = parseFloat(document.getElementById('cfg-pct-fc').value) || data.config.pctFondoComun;
+  data.config.socio1Nombre  = document.getElementById('cfg-s1-nombre').value.trim()   || data.config.socio1Nombre;
+  data.config.socio1Pct     = parseFloat(document.getElementById('cfg-s1-pct').value) || data.config.socio1Pct;
+  data.config.socio2Nombre  = document.getElementById('cfg-s2-nombre').value.trim()   || data.config.socio2Nombre;
+  data.config.socio2Pct     = parseFloat(document.getElementById('cfg-s2-pct').value) || data.config.socio2Pct;
+  saveData();
+  renderAutoBackups();
+}
+
+function renderPlataformasConfig() {
+  const container = document.getElementById('cfg-plataformas-list');
+  if (!container) return;
+  container.innerHTML = (data.config.plataformas || []).map((p, i) => `
+    <div class="cfg-plat-row">
+      <input type="text" class="pago-row-input cfg-plat-input" data-idx="${i}" value="${esc(p)}" placeholder="Nombre de plataforma" style="flex:1" />
+      <button onclick="removePlataforma(${i})"
+        style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:4px 6px;line-height:1">×</button>
+    </div>`).join('');
+}
+
+function addPlataforma() {
+  data.config.plataformas = data.config.plataformas || [];
+  data.config.plataformas.push('Nueva Plataforma');
+  renderPlataformasConfig();
+}
+
+function removePlataforma(i) {
+  data.config.plataformas.splice(i, 1);
+  renderPlataformasConfig();
+}
+
+function savePlataformas() {
+  const inputs = document.querySelectorAll('.cfg-plat-input');
+  data.config.plataformas = [...inputs].map(inp => inp.value.trim()).filter(Boolean);
+  saveData();
+  showToast('✅ Plataformas guardadas');
+  renderPlataformasConfig();
+}
+
+function resetData() {
+  if (!confirm('⚠️ ¡ATENCIÓN! Esto borra TODOS los datos sin guardar en historial.\n\n¿Estás seguro? Esta acción no se puede deshacer.')) return;
+  data = JSON.parse(JSON.stringify(DEFAULT_DATA));
+  saveData();
+  showToast('🔄 Datos reseteados');
+}
+
+// ─────────────────────────────────────────────────────
+// 25. HELPERS MODALS
+// ─────────────────────────────────────────────────────
+function openModal(id) {
+  document.getElementById(id).classList.add('open');
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', function(e) {
+    if (e.target === this) this.classList.remove('open');
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// 26. FORMATEO DE FECHA
+// ─────────────────────────────────────────────────────
+function formatDate(str) {
+  if (!str) return '—';
+  const parts = str.split('-');
+  if (parts.length !== 3) return str;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function esc(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ─────────────────────────────────────────────────────
+// 27. EXPORTAR CSV
+// ─────────────────────────────────────────────────────
+function exportCSV() {
+  const rows = [];
+  rows.push([`RESUMEN MENSUAL — ${data.config.mes} ${data.config.anio}`]);
+  rows.push([]);
+  rows.push(['VENTAS POR DÍA']);
+  rows.push(['Día','Fecha','Total ($)','Burgers','Cobros por Plataforma']);
+  data.ventas.forEach(v => {
+    const pagos = (v.pagos||[]).map(p => `${p.plataforma}: $${p.monto}`).join(' | ');
+    rows.push([v.dia, v.fecha, v.monto, v.burgers, pagos]);
+  });
+  rows.push([]);
+  rows.push(['FORMAS DE PAGO (consolidado)']);
+  rows.push(['Plataforma','Monto','Incidencia']);
+  const pagos = calcPagosConsolidados();
+  const tp    = calcTotalPagos();
+  pagos.forEach(p => rows.push([p.nombre, p.monto, pct(p.monto, tp)]));
+  rows.push([]);
+  rows.push(['GASTOS FIJOS']);
+  rows.push(['Nombre','Monto']);
+  data.gastosFijosDetalle.forEach(g => rows.push([g.nombre, g.monto]));
+  rows.push([]);
+  rows.push(['GASTOS GENERALES']);
+  rows.push(['Fecha','Nombre','Categoría','Monto']);
+  data.gastosGenerales.forEach(g => rows.push([g.fecha, g.nombre, g.categoria, g.monto]));
+  rows.push([]);
+  rows.push(['BALANCE']);
+  const b = data.balance;
+  rows.push(['Ingresos','Gastos Generales','Gastos Fijos','Sueldos','Ganancia Neta']);
+  rows.push([b.ventas, b.compras, b.gastosFijos, b.sueldos, calcGananciaNeta()]);
+  rows.push([]);
+  rows.push(['DISTRIBUCIÓN']);
+  const c = data.config;
+  rows.push(['Egresos de Ganancia', calcTotalEgresos()]);
+  rows.push([c.socio1Nombre, calcParteSocio('juan'), `Adelantos: ${calcAdelantosSocio('juan')}`, `A pagar: ${calcTotalAPagar('juan')}`]);
+  rows.push([c.socio2Nombre, calcParteSocio('emi'),  `Adelantos: ${calcAdelantosSocio('emi')}`,  `A pagar: ${calcTotalAPagar('emi')}`]);
+
+  const csv  = rows.map(r => r.map(cell => `"${String(cell||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `Resumen_${data.config.mes}_${data.config.anio}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('📥 CSV exportado correctamente');
+}
+
+// ─────────────────────────────────────────────────────
+// 28. TOAST
+// ─────────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// ─────────────────────────────────────────────────────
+// 29. CHART HELPERS
+// ─────────────────────────────────────────────────────
+function destroyChart(key) {
+  if (charts[key]) { charts[key].destroy(); delete charts[key]; }
+}
+
+function chartOptions(title) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { labels: { color: '#e2e8f0', font: { size: 12 } } },
+      title:  { display: false },
+      tooltip: {
+        callbacks: {
+          label: (ctx) => {
+            if (typeof ctx.raw === 'number' && ctx.raw > 1000)
+              return ` ${ctx.dataset.label}: ${fmt(ctx.raw)}`;
+            return ` ${ctx.dataset.label}: ${ctx.raw}`;
+          }
+        }
+      }
+    },
+    scales: {
+      x: { ticks: { color: '#94a3b8' }, grid: { color: '#2a2a45' } },
+      y: { ticks: { color: '#94a3b8', callback: v => v >= 1000 ? '$' + v.toLocaleString('es-AR') : v }, grid: { color: '#2a2a45' } },
+    }
+  };
+}
+
+// ─────────────────────────────────────────────────────
+// 30. BACKUP & RESTORE
+// ─────────────────────────────────────────────────────
+function exportJSON() {
+  const mes  = data.config.mes  || 'backup';
+  const anio = data.config.anio || new Date().getFullYear();
+  const ts   = new Date().toISOString().replace(/[:.]/g,'-').slice(0,16);
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `PeRez_Burger_${mes}_${anio}_${ts}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('💾 Backup exportado correctamente');
+}
+
+function importJSON(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      if (!parsed.config || !parsed.ventas || !parsed.balance) {
+        showToast('❌ Archivo inválido — no parece un backup de Pere\'z Burger');
+        return;
+      }
+      if (!confirm(`¿Restaurar los datos de "${parsed.config.mes} ${parsed.config.anio}"? Se pisarán los datos actuales.`)) return;
+      data = migrateData(parsed);
+      saveData();
+      showToast('✅ Datos restaurados desde backup');
+    } catch(err) {
+      showToast('❌ Error al leer el archivo: ' + err.message);
+    }
+    input.value = '';
+  };
+  reader.readAsText(file);
+}
+
+function saveAutoBackup() {
+  try {
+    const existing = JSON.parse(localStorage.getItem(AUTOBACKUP_KEY) || '[]');
+    const snapshot = {
+      ts:    new Date().toISOString(),
+      label: `${data.config.mes} ${data.config.anio} — ${new Date().toLocaleString('es-AR')}`,
+      data:  JSON.parse(JSON.stringify(data)),
+    };
+    existing.unshift(snapshot);
+    if (existing.length > MAX_AUTOBACKUPS) existing.splice(MAX_AUTOBACKUPS);
+    localStorage.setItem(AUTOBACKUP_KEY, JSON.stringify(existing));
+  } catch(e) { /* silencia si no hay espacio */ }
+}
+
+function renderAutoBackups() {
+  const el = document.getElementById('autobackup-list');
+  if (!el) return;
+  const list = JSON.parse(localStorage.getItem(AUTOBACKUP_KEY) || '[]');
+  if (!list.length) {
+    el.innerHTML = '<p style="font-size:13px;color:var(--muted)">Todavía no hay auto-backups. Se crean automáticamente al guardar.</p>';
+    return;
+  }
+  el.innerHTML = list.map((b, i) => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--card2);border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+      <div>
+        <div style="font-size:13px;font-weight:600">${b.label}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">Auto-backup #${i+1}</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="restoreAutoBackup(${i})">↩️ Restaurar</button>
+        <button class="btn btn-ghost btn-sm" onclick="downloadAutoBackup(${i})">💾 Descargar</button>
+      </div>
+    </div>`).join('');
+}
+
+function restoreAutoBackup(i) {
+  const list = JSON.parse(localStorage.getItem(AUTOBACKUP_KEY) || '[]');
+  if (!list[i]) return;
+  if (!confirm(`¿Restaurar el backup "${list[i].label}"? Se pisarán los datos actuales.`)) return;
+  data = migrateData(list[i].data);
+  saveData();
+  showToast('✅ Datos restaurados desde auto-backup');
+}
+
+function downloadAutoBackup(i) {
+  const list = JSON.parse(localStorage.getItem(AUTOBACKUP_KEY) || '[]');
+  if (!list[i]) return;
+  const blob = new Blob([JSON.stringify(list[i].data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `PeRez_Burger_autobackup_${i+1}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─────────────────────────────────────────────────────
+// 31. INIT
+// ─────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadData();
+  renderAll();
+});
