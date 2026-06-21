@@ -22,6 +22,18 @@ const CATEGORIAS_GG = ['Insumos','Servicios','Mantenimiento','Otros'];
 const CAT_COLORS = {
   Insumos: '#f97316', Servicios: '#6366f1', Mantenimiento: '#fbbf24', Otros: '#10b981'
 };
+const CAT_COLORS_EXTRA = ['#ec4899','#14b8a6','#8b5cf6','#f43f5e','#06b6d4','#84cc16','#fb923c'];
+function getCatColor(cat) {
+  if (CAT_COLORS[cat]) return CAT_COLORS[cat];
+  // Color estable basado en el nombre
+  let h = 0; for (let i = 0; i < cat.length; i++) h = (h * 31 + cat.charCodeAt(i)) % CAT_COLORS_EXTRA.length;
+  return CAT_COLORS_EXTRA[h];
+}
+function getAllCats() {
+  const base = [...CATEGORIAS_GG];
+  (data.gastosGenerales || []).forEach(g => { if (g.categoria && !base.includes(g.categoria)) base.push(g.categoria); });
+  return base;
+}
 
 let currentGastosGFilter = 'Todos';
 let currentSection = 'cierre';
@@ -1012,9 +1024,11 @@ function deleteGastoFijo(i) {
 function renderGastosGenerales() {
   const total = data.gastosGenerales.reduce((s, g) => s + g.monto, 0);
 
+  const allCats = getAllCats();
   const bycat = {};
-  CATEGORIAS_GG.forEach(c => { bycat[c] = 0; });
+  allCats.forEach(c => { bycat[c] = 0; });
   data.gastosGenerales.forEach(g => { bycat[g.categoria] = (bycat[g.categoria] || 0) + g.monto; });
+  const activeCats = allCats.filter(c => bycat[c] > 0);
 
   document.getElementById('gastosg-kpis').innerHTML = `
     <div class="kpi-card red">
@@ -1023,9 +1037,9 @@ function renderGastosGenerales() {
       <div class="kpi-value">${fmt(total)}</div>
       <div class="kpi-sub">${data.gastosGenerales.length} ítems</div>
     </div>
-    ${CATEGORIAS_GG.map(c => `
+    ${activeCats.map(c => `
     <div class="kpi-card">
-      <div class="kpi-icon">📋</div>
+      <div class="kpi-icon" style="color:${getCatColor(c)}">●</div>
       <div class="kpi-label">${c}</div>
       <div class="kpi-value" style="font-size:18px">${fmt(bycat[c])}</div>
       <div class="kpi-sub">${pct(bycat[c], total)} del total</div>
@@ -1033,7 +1047,7 @@ function renderGastosGenerales() {
 
   const filterBar = document.getElementById('gastosg-filters');
   if (filterBar) {
-    const cats = ['Todos', ...CATEGORIAS_GG];
+    const cats = ['Todos', ...allCats];
     filterBar.innerHTML = cats.map(c => `
       <button class="filter-btn ${currentGastosGFilter === c ? 'active' : ''}" data-cat="${c}" onclick="setGastosGFilter('${c}')">${c}</button>`
     ).join('');
@@ -1063,7 +1077,7 @@ function renderGastosGeneralesTable() {
     return `<tr>
       <td>${g.fecha ? formatDate(g.fecha) : '—'}</td>
       <td>${esc(g.nombre)}</td>
-      <td><span class="badge badge-orange" style="background:${CAT_COLORS[g.categoria]}22;color:${CAT_COLORS[g.categoria]}">${g.categoria}</span></td>
+      <td><span class="badge badge-orange" style="background:${getCatColor(g.categoria)}22;color:${getCatColor(g.categoria)}">${g.categoria}</span></td>
       <td class="text-red fw-700">${fmt(g.monto)}</td>
       <td>
         <button class="btn btn-ghost btn-sm" onclick="editGastoG(${realI})">✏️</button>
@@ -1082,9 +1096,9 @@ function renderChartGastosG(bycat, total) {
   const ctx = document.getElementById('chart-gastosg');
   if (!ctx) return;
   destroyChart('gastosg');
-  const cats   = CATEGORIAS_GG.filter(c => bycat[c] > 0);
+  const cats   = getAllCats().filter(c => bycat[c] > 0);
   const values = cats.map(c => bycat[c]);
-  const colors = cats.map(c => CAT_COLORS[c]);
+  const colors = cats.map(c => getCatColor(c));
   if (!values.length) return;
   charts['gastosg'] = new Chart(ctx, {
     type: 'doughnut',
@@ -1106,10 +1120,10 @@ function renderChartGastosG(bycat, total) {
 function renderGastosGSubtotales(bycat, total) {
   const el = document.getElementById('gastosg-subtotales');
   if (!el) return;
-  el.innerHTML = CATEGORIAS_GG.map(c => `
+  el.innerHTML = getAllCats().map(c => `
     <div class="progress-wrap">
       <div class="progress-label">
-        <span style="color:${CAT_COLORS[c]}">${c}</span>
+        <span style="color:${getCatColor(c)}">${c}</span>
         <span>${fmt(bycat[c])} · ${pct(bycat[c], total)}</span>
       </div>
       <div class="progress-bar">
@@ -1118,31 +1132,52 @@ function renderGastosGSubtotales(bycat, total) {
     </div>`).join('');
 }
 
+function toggleCategoriaCustom() {
+  const sel  = document.getElementById('gg-categoria');
+  const wrap = document.getElementById('gg-custom-wrap');
+  wrap.style.display = sel.value === '__custom__' ? '' : 'none';
+  if (sel.value === '__custom__') document.getElementById('gg-categoria-custom').focus();
+}
+
 function openAddGastoGModal() {
-  document.getElementById('gg-edit-index').value = -1;
-  document.getElementById('gg-fecha').value      = new Date().toISOString().split('T')[0];
-  document.getElementById('gg-nombre').value     = '';
-  document.getElementById('gg-categoria').value  = 'Insumos';
-  document.getElementById('gg-monto').value      = '';
+  document.getElementById('gg-edit-index').value         = -1;
+  document.getElementById('gg-fecha').value              = new Date().toISOString().split('T')[0];
+  document.getElementById('gg-nombre').value             = '';
+  document.getElementById('gg-categoria').value          = 'Insumos';
+  document.getElementById('gg-categoria-custom').value   = '';
+  document.getElementById('gg-custom-wrap').style.display = 'none';
+  document.getElementById('gg-monto').value              = '';
   openModal('modal-gastosg');
 }
 
 function editGastoG(i) {
   const g = data.gastosGenerales[i];
-  document.getElementById('gg-edit-index').value = i;
-  document.getElementById('gg-fecha').value      = g.fecha || '';
-  document.getElementById('gg-nombre').value     = g.nombre;
-  document.getElementById('gg-categoria').value  = g.categoria;
-  document.getElementById('gg-monto').value      = g.monto;
+  const isCustom = !CATEGORIAS_GG.includes(g.categoria);
+  document.getElementById('gg-edit-index').value         = i;
+  document.getElementById('gg-fecha').value              = g.fecha || '';
+  document.getElementById('gg-nombre').value             = g.nombre;
+  document.getElementById('gg-monto').value              = g.monto;
+  if (isCustom) {
+    document.getElementById('gg-categoria').value          = '__custom__';
+    document.getElementById('gg-categoria-custom').value   = g.categoria;
+    document.getElementById('gg-custom-wrap').style.display = '';
+  } else {
+    document.getElementById('gg-categoria').value          = g.categoria;
+    document.getElementById('gg-categoria-custom').value   = '';
+    document.getElementById('gg-custom-wrap').style.display = 'none';
+  }
   openModal('modal-gastosg');
 }
 
 function saveGastoG() {
-  const idx       = parseInt(document.getElementById('gg-edit-index').value);
-  const fecha     = document.getElementById('gg-fecha').value;
-  const nombre    = document.getElementById('gg-nombre').value.trim();
-  const categoria = document.getElementById('gg-categoria').value;
-  const monto     = parseFloat(document.getElementById('gg-monto').value) || 0;
+  const idx    = parseInt(document.getElementById('gg-edit-index').value);
+  const fecha  = document.getElementById('gg-fecha').value;
+  const nombre = document.getElementById('gg-nombre').value.trim();
+  const selVal = document.getElementById('gg-categoria').value;
+  const categoria = selVal === '__custom__'
+    ? (document.getElementById('gg-categoria-custom').value.trim() || 'Otros')
+    : selVal;
+  const monto  = parseFloat(document.getElementById('gg-monto').value) || 0;
   if (!nombre) return;
   if (idx >= 0) data.gastosGenerales[idx] = { fecha, nombre, monto, categoria };
   else          data.gastosGenerales.push({ fecha, nombre, monto, categoria });
