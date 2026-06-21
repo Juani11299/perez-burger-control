@@ -992,6 +992,37 @@
   </div>
 </div>
 
+<!-- Modal Editar Historial -->
+<div class="modal-overlay" id="modal-editar-historial">
+  <div class="modal">
+    <h3>✏️ Editar Mes Archivado</h3>
+    <div id="editar-historial-titulo" style="font-size:13px;color:var(--muted);margin-bottom:16px"></div>
+    <input type="hidden" id="editar-historial-index" value="-1" />
+    <div class="form-grid" style="grid-template-columns:1fr 1fr">
+      <div class="form-group">
+        <label>💰 Ingresos del Mes</label>
+        <input type="number" id="edit-h-ventas" placeholder="0" min="0" />
+      </div>
+      <div class="form-group">
+        <label>📦 Gastos Generales</label>
+        <input type="number" id="edit-h-compras" placeholder="0" min="0" />
+      </div>
+      <div class="form-group">
+        <label>🧾 Gastos Fijos</label>
+        <input type="number" id="edit-h-gastosfijos" placeholder="0" min="0" />
+      </div>
+      <div class="form-group">
+        <label>👤 Sueldos</label>
+        <input type="number" id="edit-h-sueldos" placeholder="0" min="0" />
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-success" onclick="guardarEditHistorial()">💾 Guardar cambios</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-editar-historial')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal Empleado -->
 <div class="modal-overlay" id="modal-empleado">
   <div class="modal">

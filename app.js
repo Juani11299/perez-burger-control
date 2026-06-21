@@ -1653,7 +1653,8 @@ function renderHistorial() {
             </div>
             <div style="display:flex;gap:8px">
               <button class="btn btn-ghost btn-sm" onclick="verDetalleHistorial(${i})">👁️ Ver</button>
-              <button class="btn btn-ghost btn-sm" onclick="descargarHistorial(${i})">💾 JSON</button>
+              <button class="btn btn-ghost btn-sm" onclick="editarHistorial(${i})">✏️ Editar</button>
+              <button class="btn btn-danger btn-sm" onclick="borrarHistorial(${i})">🗑️</button>
             </div>
           </div>
         </div>
@@ -1725,6 +1726,49 @@ function descargarHistorial(i) {
   a.download = `PeRez_Burger_${h.mesAnio}.json`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function editarHistorial(i) {
+  const historial = JSON.parse(localStorage.getItem(HISTORIAL_KEY) || '[]');
+  const h = historial[i];
+  if (!h) return;
+  const b = h.data.balance || {};
+  document.getElementById('editar-historial-index').value       = i;
+  document.getElementById('editar-historial-titulo').textContent = h.mesAnio.replace('_', ' ');
+  document.getElementById('edit-h-ventas').value      = b.ventas      || 0;
+  document.getElementById('edit-h-compras').value     = b.compras     || 0;
+  document.getElementById('edit-h-gastosfijos').value = b.gastosFijos || 0;
+  document.getElementById('edit-h-sueldos').value     = b.sueldos     || 0;
+  openModal('modal-editar-historial');
+}
+
+function guardarEditHistorial() {
+  const i        = parseInt(document.getElementById('editar-historial-index').value);
+  const historial = JSON.parse(localStorage.getItem(HISTORIAL_KEY) || '[]');
+  if (!historial[i]) return;
+  historial[i].data.balance = {
+    ...historial[i].data.balance,
+    ventas:      parseFloat(document.getElementById('edit-h-ventas').value)      || 0,
+    compras:     parseFloat(document.getElementById('edit-h-compras').value)     || 0,
+    gastosFijos: parseFloat(document.getElementById('edit-h-gastosfijos').value) || 0,
+    sueldos:     parseFloat(document.getElementById('edit-h-sueldos').value)     || 0,
+  };
+  localStorage.setItem(HISTORIAL_KEY, JSON.stringify(historial));
+  pushHistorialSnapshot(historial[i]).catch(() => {});
+  closeModal('modal-editar-historial');
+  renderHistorial();
+  showToast('✅ Mes actualizado');
+}
+
+function borrarHistorial(i) {
+  const historial = JSON.parse(localStorage.getItem(HISTORIAL_KEY) || '[]');
+  const h = historial[i];
+  if (!h) return;
+  if (!confirm(`¿Eliminar el historial de ${h.mesAnio.replace('_', ' ')}?\n\nEsta acción no se puede deshacer.`)) return;
+  historial.splice(i, 1);
+  localStorage.setItem(HISTORIAL_KEY, JSON.stringify(historial));
+  renderHistorial();
+  showToast('🗑️ Mes eliminado del historial');
 }
 
 // ─────────────────────────────────────────────────────
