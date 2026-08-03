@@ -36,6 +36,7 @@ function getAllCats() {
 }
 
 let currentGastosGFilter = 'Todos';
+let empFunciones = [];
 let currentSection = 'cierre';
 
 // ─────────────────────────────────────────────────────
@@ -112,6 +113,13 @@ function migrateData(d) {
   if (!d.gastosGenerales)      d.gastosGenerales      = [];
   if (!d.egresosGanancia)      d.egresosGanancia      = [];
   if (!d.sueldosDetalle)       d.sueldosDetalle       = [];
+  // Migrar empleados al formato multi-función (no destruye datos existentes)
+  d.sueldosDetalle = d.sueldosDetalle.map(e => {
+    if (!e.funciones) {
+      return { nombre: e.nombre, funciones: [{ funcion: 'General', diasTrabajados: e.diasTrabajados || 0, pagoPorDia: e.pagoPorDia || 0 }] };
+    }
+    return e;
+  });
   if (!d.config.plataformas)   d.config.plataformas   = ['Efectivo','Mercado Pago 1','Mercado Pago 2'];
   if (!d.pagos)                d.pagos                = [];
 
@@ -203,6 +211,11 @@ async function cloudGet(path) {
 async function cloudPut(path, obj) {
   const r = await cloudFetch('POST', path, obj);
   return r && r.ok;
+}
+
+async function cloudDeleteHistorial(mesAnio) {
+  if (!cloudOk) return;
+  await cloudFetch('DELETE', `historial/${mesAnio}.json`);
 }
 
 async function cloudListHistorial() {
@@ -335,7 +348,8 @@ function syncAutoBalances() {
 }
 
 function calcTotalSueldos() {
-  return (data.sueldosDetalle || []).reduce((s, e) => s + (e.diasTrabajados || 0) * (e.pagoPorDia || 0), 0);
+  return (data.sueldosDetalle || []).reduce((total, emp) =>
+    total + (emp.funciones || []).reduce((s, f) => s + (f.diasTrabajados || 0) * (f.pagoPorDia || 0), 0), 0);
 }
 
 // ─────────────────────────────────────────────────────
@@ -1800,8 +1814,10 @@ function borrarHistorial(i) {
   const h = historial[i];
   if (!h) return;
   if (!confirm(`¿Eliminar el historial de ${h.mesAnio.replace('_', ' ')}?\n\nEsta acción no se puede deshacer.`)) return;
+  const mesAnio = h.mesAnio;
   historial.splice(i, 1);
   localStorage.setItem(HISTORIAL_KEY, JSON.stringify(historial));
+  cloudDeleteHistorial(mesAnio).catch(() => {});
   renderHistorial();
   showToast('🗑️ Mes eliminado del historial');
 }
@@ -2225,7 +2241,8 @@ function saveCierre() {
     productosDelDia[p.key] = parseInt(document.getElementById('cierre-prod-' + p.key)?.value) || 0;
   });
   const burgers = productosDelDia.burgers || 0;
-  const entry = { dia, fecha, monto, burgers, pagos, productosDelDia };
+  const arqueo = readArqueo();
+  const entry = { dia, fecha, monto, burgers, pagos, productosDelDia, arqueo };
 
   const targetFecha = editF || fecha;
   const existIdx    = data.ventas.findIndex(v => v.fecha === targetFecha);
@@ -2278,6 +2295,7 @@ function editCierre(fecha) {
     if (el) el.value = v.pagos?.[i]?.monto || 0;
   });
   recalcCierreTotal();
+  fillArqueo(v.arqueo || null);
   const badge = document.getElementById('cierre-edit-badge');
   const cancelBtn = document.getElementById('cierre-cancel-btn');
   if (badge) badge.style.display = '';
@@ -2298,6 +2316,7 @@ function deleteCierre(fecha) {
 }
 
 function resetCierreForm() {
+  clearArqueo();
   document.getElementById('cierre-edit-fecha').value = '';
   const DIAS = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
   const fechaEl = document.getElementById('cierre-fecha');
@@ -2370,7 +2389,9 @@ function renderUltimosCierres() {
 // 32. SUELDOS
 // ─────────────────────────────────────────────────────
 function renderSueldos() {
-  const total = calcTotalSueldos();
+  const total    = calcTotalSueldos();
+  const totalDias = (data.sueldosDetalle || []).reduce((s, emp) =>
+    s + (emp.funciones || []).reduce((fs, f) => fs + (f.diasTrabajados || 0), 0), 0);
 
   document.getElementById('sueldos-kpis').innerHTML = `
     <div class="kpi-card red">
@@ -2382,42 +2403,51 @@ function renderSueldos() {
     <div class="kpi-card amber">
       <div class="kpi-icon">📅</div>
       <div class="kpi-label">Total Días Pagados</div>
-      <div class="kpi-value">${(data.sueldosDetalle || []).reduce((s, e) => s + (e.diasTrabajados || 0), 0)}</div>
+      <div class="kpi-value">${totalDias}</div>
       <div class="kpi-sub">este mes</div>
     </div>`;
 
-  document.getElementById('sueldos-tbody').innerHTML = (data.sueldosDetalle || []).map((e, i) => {
-    const sub = (e.diasTrabajados || 0) * (e.pagoPorDia || 0);
-    return `<tr>
-      <td><strong>${esc(e.nombre)}</strong></td>
-      <td style="text-align:center">
-        <input type="number" class="inline-days" value="${e.diasTrabajados || 0}" min="0"
-               onchange="updateDiasTrabajados(${i}, this.value)" />
-      </td>
-      <td class="text-muted">${fmt(e.pagoPorDia)}</td>
-      <td class="text-amber fw-700" id="sueldos-sub-${i}">${fmt(sub)}</td>
-      <td>
-        <button class="btn btn-ghost btn-sm" onclick="editEmpleado(${i})">✏️</button>
-        <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deleteEmpleado(${i})">🗑️</button>
+  let rows = '';
+  (data.sueldosDetalle || []).forEach((emp, ei) => {
+    const empTotal = (emp.funciones || []).reduce((s, f) => s + (f.diasTrabajados || 0) * (f.pagoPorDia || 0), 0);
+    rows += `<tr class="emp-group-header">
+      <td colspan="4"><strong>${esc(emp.nombre)}</strong> <span style="font-weight:400;color:var(--muted);font-size:12px">— ${fmt(empTotal)} total</span></td>
+      <td style="text-align:right">
+        <button class="btn btn-ghost btn-sm" onclick="editEmpleado(${ei})">✏️</button>
+        <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deleteEmpleado(${ei})">🗑️</button>
       </td>
     </tr>`;
-  }).join('');
+    (emp.funciones || []).forEach((f, fi) => {
+      const sub = (f.diasTrabajados || 0) * (f.pagoPorDia || 0);
+      rows += `<tr class="emp-func-row">
+        <td>${esc(f.funcion) || '—'}</td>
+        <td style="text-align:center">
+          <input type="number" class="inline-days" value="${f.diasTrabajados || 0}" min="0"
+                 onchange="updateDiasTrabajados(${ei}, ${fi}, this.value)" />
+        </td>
+        <td class="text-muted">${fmt(f.pagoPorDia)}</td>
+        <td class="text-amber fw-700" id="sueldos-sub-${ei}-${fi}">${fmt(sub)}</td>
+        <td></td>
+      </tr>`;
+    });
+  });
 
+  document.getElementById('sueldos-tbody').innerHTML = rows;
   document.getElementById('sueldos-total').innerHTML = `
-    <td><strong>TOTAL</strong></td>
-    <td></td><td></td>
+    <td colspan="3"><strong>TOTAL</strong></td>
     <td id="sueldos-total-val"><strong class="text-amber">${fmt(total)}</strong></td>
     <td></td>`;
 }
 
-function updateDiasTrabajados(i, val) {
-  if (!data.sueldosDetalle[i]) return;
-  data.sueldosDetalle[i].diasTrabajados = parseInt(val) || 0;
-  const sub   = data.sueldosDetalle[i].diasTrabajados * data.sueldosDetalle[i].pagoPorDia;
+function updateDiasTrabajados(ei, fi, val) {
+  const emp = data.sueldosDetalle[ei];
+  if (!emp || !emp.funciones[fi]) return;
+  emp.funciones[fi].diasTrabajados = parseInt(val) || 0;
+  const sub   = emp.funciones[fi].diasTrabajados * emp.funciones[fi].pagoPorDia;
   const total = calcTotalSueldos();
   data.balance.sueldos = total;
   silentSave();
-  const subEl   = document.getElementById('sueldos-sub-' + i);
+  const subEl   = document.getElementById(`sueldos-sub-${ei}-${fi}`);
   const totalEl = document.getElementById('sueldos-total-val');
   if (subEl)   subEl.innerHTML   = `<strong class="text-amber">${fmt(sub)}</strong>`;
   if (totalEl) totalEl.innerHTML = `<strong class="text-amber">${fmt(total)}</strong>`;
@@ -2425,30 +2455,66 @@ function updateDiasTrabajados(i, val) {
   if (kpiEl) kpiEl.textContent = fmt(total);
 }
 
+function empRenderFunciones() {
+  document.getElementById('emp-funciones-list').innerHTML = empFunciones.map((f, i) => `
+    <div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:8px;align-items:end;margin-bottom:8px">
+      <div class="form-group" style="margin-bottom:0">
+        ${i === 0 ? '<label style="font-size:11px;color:var(--muted)">Función / Rol</label>' : ''}
+        <input type="text" class="form-input" value="${esc(f.funcion)}" placeholder="Ej: Cocinero"
+               oninput="empFunciones[${i}].funcion=this.value" />
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        ${i === 0 ? '<label style="font-size:11px;color:var(--muted)">Días</label>' : ''}
+        <input type="number" class="form-input" value="${f.diasTrabajados}" min="0"
+               oninput="empFunciones[${i}].diasTrabajados=parseInt(this.value)||0" />
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        ${i === 0 ? '<label style="font-size:11px;color:var(--muted)">$/Día</label>' : ''}
+        <input type="number" class="form-input" value="${f.pagoPorDia}" min="0"
+               oninput="empFunciones[${i}].pagoPorDia=parseFloat(this.value)||0" />
+      </div>
+      <div style="${i===0?'margin-top:18px':''}">
+        ${empFunciones.length > 1
+          ? `<button class="btn btn-danger btn-sm" onclick="empRemoveFuncion(${i})">✕</button>`
+          : '<span style="width:36px;display:block"></span>'}
+      </div>
+    </div>`).join('');
+}
+
+function empAddFuncion() {
+  empFunciones.push({ funcion: '', diasTrabajados: 0, pagoPorDia: 30000 });
+  empRenderFunciones();
+}
+
+function empRemoveFuncion(i) {
+  if (empFunciones.length <= 1) return;
+  empFunciones.splice(i, 1);
+  empRenderFunciones();
+}
+
 function openAddEmpleadoModal() {
+  empFunciones = [{ funcion: 'General', diasTrabajados: 0, pagoPorDia: 30000 }];
   document.getElementById('emp-edit-index').value = -1;
   document.getElementById('emp-nombre').value     = '';
-  document.getElementById('emp-dias').value       = '0';
-  document.getElementById('emp-pago').value       = '30000';
+  empRenderFunciones();
   openModal('modal-empleado');
 }
 
 function editEmpleado(i) {
   const e = data.sueldosDetalle[i];
+  empFunciones = JSON.parse(JSON.stringify(e.funciones || [{ funcion:'General', diasTrabajados:0, pagoPorDia:30000 }]));
   document.getElementById('emp-edit-index').value = i;
   document.getElementById('emp-nombre').value     = e.nombre;
-  document.getElementById('emp-dias').value       = e.diasTrabajados || 0;
-  document.getElementById('emp-pago').value       = e.pagoPorDia;
+  empRenderFunciones();
   openModal('modal-empleado');
 }
 
 function saveEmpleado() {
   const idx    = parseInt(document.getElementById('emp-edit-index').value);
   const nombre = document.getElementById('emp-nombre').value.trim();
-  const dias   = parseInt(document.getElementById('emp-dias').value)   || 0;
-  const pago   = parseFloat(document.getElementById('emp-pago').value) || 0;
   if (!nombre) return;
-  const entry = { nombre, diasTrabajados: dias, pagoPorDia: pago };
+  const funciones = empFunciones.map(f => ({ ...f }));
+  const entry = { nombre, funciones };
   if (idx >= 0) data.sueldosDetalle[idx] = entry;
   else          data.sueldosDetalle.push(entry);
   data.balance.sueldos = calcTotalSueldos();
@@ -2468,6 +2534,90 @@ function deleteEmpleado(i) {
 // ─────────────────────────────────────────────────────
 // 33. INIT
 // ─────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────
+// ARQUEO DE CAJA
+// ─────────────────────────────────────────────────────
+const ARS_DENOMS = [100000, 50000, 20000, 10000, 5000, 2000, 1000];
+const USD_DENOMS = [100, 50, 20, 10, 5, 1];
+
+function toggleArqueo() {
+  const btn  = document.getElementById('arqueo-toggle-btn');
+  const body = document.getElementById('arqueo-body');
+  if (!btn || !body) return;
+  btn.classList.toggle('open');
+  body.classList.toggle('open');
+}
+
+function recalcArqueo() {
+  let totalARS = 0, totalUSD = 0;
+  ARS_DENOMS.forEach(d => {
+    const qty = parseInt(document.getElementById('ars-' + d)?.value) || 0;
+    const sub = qty * d;
+    totalARS += sub;
+    const el = document.getElementById('sub-ars-' + d);
+    if (el) el.textContent = sub ? '$' + sub.toLocaleString('es-AR') : '$0';
+  });
+  USD_DENOMS.forEach(d => {
+    const qty = parseInt(document.getElementById('usd-' + d)?.value) || 0;
+    const sub = qty * d;
+    totalUSD += sub;
+    const el = document.getElementById('sub-usd-' + d);
+    if (el) el.textContent = sub ? 'USD ' + sub : 'USD 0';
+  });
+  const arsEl = document.getElementById('arqueo-total-ars');
+  const usdEl = document.getElementById('arqueo-total-usd');
+  if (arsEl) arsEl.textContent = '$' + totalARS.toLocaleString('es-AR');
+  if (usdEl) usdEl.textContent = 'USD ' + totalUSD;
+}
+
+function readArqueo() {
+  const pesos = {}, dolares = {};
+  ARS_DENOMS.forEach(d => { pesos[d]   = parseInt(document.getElementById('ars-' + d)?.value) || 0; });
+  USD_DENOMS.forEach(d => { dolares[d] = parseInt(document.getElementById('usd-' + d)?.value) || 0; });
+  const hasPesos   = Object.values(pesos).some(v => v > 0);
+  const hasDolares = Object.values(dolares).some(v => v > 0);
+  return (hasPesos || hasDolares) ? { pesos, dolares } : null;
+}
+
+function fillArqueo(arqueo) {
+  clearArqueo();
+  if (!arqueo) return;
+  ARS_DENOMS.forEach(d => {
+    const el = document.getElementById('ars-' + d);
+    if (el && arqueo.pesos?.[d]) el.value = arqueo.pesos[d];
+  });
+  USD_DENOMS.forEach(d => {
+    const el = document.getElementById('usd-' + d);
+    if (el && arqueo.dolares?.[d]) el.value = arqueo.dolares[d];
+  });
+  recalcArqueo();
+  // Auto-open arqueo section if there's data
+  const btn  = document.getElementById('arqueo-toggle-btn');
+  const body = document.getElementById('arqueo-body');
+  if (btn && !btn.classList.contains('open')) { btn.classList.add('open'); body.classList.add('open'); }
+}
+
+function clearArqueo() {
+  ARS_DENOMS.forEach(d => { const el = document.getElementById('ars-' + d); if (el) el.value = 0; });
+  USD_DENOMS.forEach(d => { const el = document.getElementById('usd-' + d); if (el) el.value = 0; });
+  recalcArqueo();
+  const btn  = document.getElementById('arqueo-toggle-btn');
+  const body = document.getElementById('arqueo-body');
+  if (btn)  btn.classList.remove('open');
+  if (body) body.classList.remove('open');
+}
+
+// ─────────────────────────────────────────────────────
+// MOBILE SIDEBAR
+// ─────────────────────────────────────────────────────
+function toggleSidebar() {
+  const sidebar  = document.getElementById('sidebar');
+  const overlay  = document.getElementById('sidebar-overlay');
+  sidebar.classList.toggle('open');
+  overlay.classList.toggle('open');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadData();
   renderAll();
