@@ -35,6 +35,7 @@ function getAllCats() {
   return base;
 }
 
+const IS_READONLY = new URLSearchParams(location.search).get('readonly') === '1';
 let currentGastosGFilter = 'Todos';
 let empFunciones = [];
 let currentSection = 'cierre';
@@ -150,6 +151,7 @@ function loadData() {
 }
 
 function saveData() {
+  if (IS_READONLY) return;
   syncAutoBalances();
   data._updatedAt = Date.now();
   localStorage.setItem(MAIN_KEY, JSON.stringify(data));
@@ -259,6 +261,7 @@ async function initCloudSync() {
 
 // Sube datos actuales a la nube (background, no bloquea UI)
 async function pushToCloud() {
+  if (IS_READONLY) return false;
   if (!cloudOk) {
     // Reintentar conexión si estaba offline
     const probe = await cloudGet('current.json');
@@ -305,6 +308,7 @@ async function mergeHistorialFromCloud() {
 
 // Guarda silenciosamente sin toast ni re-render (para auto-guardado en campos)
 function silentSave() {
+  if (IS_READONLY) return;
   syncAutoBalances();
   data._updatedAt = Date.now();
   localStorage.setItem(MAIN_KEY, JSON.stringify(data));
@@ -2618,8 +2622,21 @@ function toggleSidebar() {
   overlay.classList.toggle('open');
 }
 
+function copyReadonlyLink() {
+  const link = 'https://juani11299.github.io/perez-burger-control/?readonly=1';
+  navigator.clipboard.writeText(link)
+    .then(() => showToast('📋 Link copiado al portapapeles'))
+    .catch(() => {
+      const el = document.getElementById('readonly-link-input');
+      if (el) { el.select(); document.execCommand('copy'); showToast('📋 Link copiado'); }
+    });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadData();
+  if (IS_READONLY) {
+    document.body.classList.add('readonly');
+  }
   renderAll();
   renderCierreDelDia();  // render cierre en background (sección activa)
   initCloudSync();

@@ -372,6 +372,25 @@
       .cierre-card { font-size:12px; }
       .s-cierre-layout { flex-direction:column !important; }
     }
+    /* ── MODO SOLO LECTURA ── */
+    #readonly-banner {
+      display: none; position: sticky; top: 0; z-index: 50;
+      background: rgba(99,102,241,.15); border-bottom: 2px solid var(--blue);
+      padding: 10px 24px; align-items: center; gap: 12px;
+      font-size: 13px; font-weight: 600; color: var(--blue);
+    }
+    body.readonly #readonly-banner { display: flex; }
+    body.readonly .btn-primary,
+    body.readonly .btn-success,
+    body.readonly .btn-danger,
+    body.readonly .ro-hide { display: none !important; }
+    body.readonly input:not([readonly]),
+    body.readonly select,
+    body.readonly textarea { pointer-events: none !important; opacity: .75; }
+    body.readonly label[style*="cursor:pointer"] { display: none !important; }
+    body.readonly #hamburger { pointer-events: auto; }
+    /* el botón de copiar link en readonly sigue visible */
+    body.readonly #copy-readonly-btn { display: inline-flex !important; }
   </style>
 </head>
 <body>
@@ -449,7 +468,7 @@
       <span class="month-badge" id="current-month-badge">Abril 2026</span>
       <button class="btn btn-ghost" onclick="exportCSV()">📥 CSV</button>
       <button class="btn btn-ghost" onclick="exportJSON()" title="Guardar backup completo en archivo JSON">💾 Backup</button>
-      <label class="btn btn-ghost" style="cursor:pointer" title="Restaurar desde archivo de backup">
+      <label class="btn btn-ghost ro-hide" style="cursor:pointer" title="Restaurar desde archivo de backup">
         📂 Restaurar <input type="file" id="import-json-input" accept=".json" style="display:none" onchange="importJSON(this)" />
       </label>
       <div id="sync-indicator" style="font-size:12px;padding:5px 12px;border-radius:20px;background:var(--card2);border:1px solid var(--border)">☁️ Conectando...</div>
@@ -457,6 +476,7 @@
     </div>
   </header>
 
+  <div id="readonly-banner">👁️ <strong>Modo vista</strong>&nbsp;— podés navegar libremente pero no modificar datos.</div>
   <div id="content">
 
     <!-- ════════════ CIERRE DEL DÍA ════════════ -->
@@ -922,6 +942,27 @@
           <div class="form-actions" style="margin-top:16px">
             <button class="btn btn-primary" onclick="savePlataformas()">💾 Guardar Plataformas</button>
           </div>
+        </div>
+      </div>
+
+      <!-- Link de Solo Lectura -->
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">👁️ Link de Solo Lectura</span></div>
+        <div class="panel-body">
+          <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+            Compartí este link con socios, contadores o empleados. Pueden ver todos los datos y navegar por la app, pero sin poder modificar nada.
+          </p>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="text" id="readonly-link-input" readonly
+                   style="flex:1;min-width:200px;pointer-events:auto !important;opacity:1 !important;cursor:text"
+                   value="https://juani11299.github.io/perez-burger-control/?readonly=1" />
+            <button id="copy-readonly-btn" class="btn btn-primary" onclick="copyReadonlyLink()" style="display:inline-flex !important">
+              📋 Copiar link
+            </button>
+          </div>
+          <p style="font-size:11px;color:var(--muted);margin-top:10px">
+            ✅ El link siempre muestra los datos actualizados en tiempo real desde la nube.
+          </p>
         </div>
       </div>
 
