@@ -2543,7 +2543,6 @@ function deleteEmpleado(i) {
 // ARQUEO DE CAJA
 // ─────────────────────────────────────────────────────
 const ARS_DENOMS = [100000, 50000, 20000, 10000, 5000, 2000, 1000];
-const USD_DENOMS = [100, 50, 20, 10, 5, 1];
 
 function toggleArqueo() {
   const btn  = document.getElementById('arqueo-toggle-btn');
@@ -2554,7 +2553,7 @@ function toggleArqueo() {
 }
 
 function recalcArqueo() {
-  let totalARS = 0, totalUSD = 0;
+  let totalARS = 0;
   ARS_DENOMS.forEach(d => {
     const qty = parseInt(document.getElementById('ars-' + d)?.value) || 0;
     const sub = qty * d;
@@ -2562,26 +2561,15 @@ function recalcArqueo() {
     const el = document.getElementById('sub-ars-' + d);
     if (el) el.textContent = sub ? '$' + sub.toLocaleString('es-AR') : '$0';
   });
-  USD_DENOMS.forEach(d => {
-    const qty = parseInt(document.getElementById('usd-' + d)?.value) || 0;
-    const sub = qty * d;
-    totalUSD += sub;
-    const el = document.getElementById('sub-usd-' + d);
-    if (el) el.textContent = sub ? 'USD ' + sub : 'USD 0';
-  });
   const arsEl = document.getElementById('arqueo-total-ars');
-  const usdEl = document.getElementById('arqueo-total-usd');
   if (arsEl) arsEl.textContent = '$' + totalARS.toLocaleString('es-AR');
-  if (usdEl) usdEl.textContent = 'USD ' + totalUSD;
 }
 
 function readArqueo() {
-  const pesos = {}, dolares = {};
-  ARS_DENOMS.forEach(d => { pesos[d]   = parseInt(document.getElementById('ars-' + d)?.value) || 0; });
-  USD_DENOMS.forEach(d => { dolares[d] = parseInt(document.getElementById('usd-' + d)?.value) || 0; });
-  const hasPesos   = Object.values(pesos).some(v => v > 0);
-  const hasDolares = Object.values(dolares).some(v => v > 0);
-  return (hasPesos || hasDolares) ? { pesos, dolares } : null;
+  const pesos = {};
+  ARS_DENOMS.forEach(d => { pesos[d] = parseInt(document.getElementById('ars-' + d)?.value) || 0; });
+  const hasPesos = Object.values(pesos).some(v => v > 0);
+  return hasPesos ? { pesos } : null;
 }
 
 function fillArqueo(arqueo) {
@@ -2590,10 +2578,6 @@ function fillArqueo(arqueo) {
   ARS_DENOMS.forEach(d => {
     const el = document.getElementById('ars-' + d);
     if (el && arqueo.pesos?.[d]) el.value = arqueo.pesos[d];
-  });
-  USD_DENOMS.forEach(d => {
-    const el = document.getElementById('usd-' + d);
-    if (el && arqueo.dolares?.[d]) el.value = arqueo.dolares[d];
   });
   recalcArqueo();
   // Auto-open arqueo section if there's data
@@ -2604,7 +2588,6 @@ function fillArqueo(arqueo) {
 
 function clearArqueo() {
   ARS_DENOMS.forEach(d => { const el = document.getElementById('ars-' + d); if (el) el.value = 0; });
-  USD_DENOMS.forEach(d => { const el = document.getElementById('usd-' + d); if (el) el.value = 0; });
   recalcArqueo();
   const btn  = document.getElementById('arqueo-toggle-btn');
   const body = document.getElementById('arqueo-body');
