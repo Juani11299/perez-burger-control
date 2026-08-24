@@ -124,12 +124,19 @@ function migrateData(d) {
   if (!d.config.plataformas)   d.config.plataformas   = ['Efectivo','Mercado Pago 1','Mercado Pago 2'];
   if (!d.pagos)                d.pagos                = [];
 
-  d.ventas = (d.ventas || []).map(v => ({
-    ...v,
-    fecha: v.fecha || '',
-    pagos: v.pagos || [],
-    productosDelDia: v.productosDelDia || null,
-  }));
+  // Migrar helados → boniatos (renombrado de producto)
+  if (d.productos && 'helados' in d.productos && !('boniatos' in d.productos)) {
+    d.productos.boniatos = d.productos.helados;
+    delete d.productos.helados;
+  }
+  d.ventas = (d.ventas || []).map(v => {
+    const pdm = v.productosDelDia;
+    if (pdm && 'helados' in pdm && !('boniatos' in pdm)) {
+      pdm.boniatos = pdm.helados;
+      delete pdm.helados;
+    }
+    return { ...v, fecha: v.fecha || '', pagos: v.pagos || [], productosDelDia: pdm || null };
+  });
 
   const gfMigSum = d.gastosFijosDetalle.reduce((s, g) => s + g.monto, 0);
   if (gfMigSum > 0) d.balance.gastosFijos = gfMigSum;
@@ -781,7 +788,7 @@ const PRODUCTOS_CONFIG = [
   { key: 'papas',   label: '🍟 Papas',    color: '#fbbf24' },
   { key: 'nuggets', label: '🥖 Nuggets',  color: '#6366f1' },
   { key: 'aros',    label: '🧅 Aros',     color: '#ec4899' },
-  { key: 'helados', label: '🍦 Helados',  color: '#38bdf8' },
+  { key: 'boniatos', label: '🍠 Boniatos', color: '#f97316' },
   { key: 'bebidas', label: '🥤 Bebidas',  color: '#a78bfa' },
 ];
 
@@ -1085,27 +1092,59 @@ function setGastosGFilter(cat) {
 }
 
 function renderGastosGeneralesTable() {
-  const filtered = currentGastosGFilter === 'Todos'
+  const isTodos = currentGastosGFilter === 'Todos';
+  const filtered = isTodos
     ? data.gastosGenerales
     : data.gastosGenerales.filter(g => g.categoria === currentGastosGFilter);
   const total = filtered.reduce((s, g) => s + g.monto, 0);
 
-  document.getElementById('gastosg-tbody').innerHTML = filtered.map((g, i) => {
-    const realI = data.gastosGenerales.indexOf(g);
-    return `<tr>
-      <td>${g.fecha ? formatDate(g.fecha) : '—'}</td>
-      <td>${esc(g.nombre)}</td>
-      <td><span class="badge badge-orange" style="background:${getCatColor(g.categoria)}22;color:${getCatColor(g.categoria)}">${g.categoria}</span></td>
-      <td class="text-red fw-700">${fmt(g.monto)}</td>
-      <td>
-        <button class="btn btn-ghost btn-sm" onclick="editGastoG(${realI})">✏️</button>
-        <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deleteGastoG(${realI})">🗑️</button>
-      </td>
-    </tr>`;
-  }).join('');
+  let rows = '';
+  if (isTodos) {
+    // Agrupar por categoría con subtotal por grupo
+    const cats = getAllCats();
+    cats.forEach(cat => {
+      const catItems = data.gastosGenerales.filter(g => g.categoria === cat);
+      if (!catItems.length) return;
+      const catTotal = catItems.reduce((s, g) => s + g.monto, 0);
+      rows += `<tr style="background:${getCatColor(cat)}18">
+        <td colspan="5" style="padding:6px 12px;font-size:12px;font-weight:700;color:${getCatColor(cat)};letter-spacing:.05em">
+          ${cat} &nbsp;<span style="font-weight:400;opacity:.8">${catItems.length} ítem${catItems.length !== 1 ? 's' : ''}</span>
+          <span style="float:right">${fmt(catTotal)}</span>
+        </td>
+      </tr>`;
+      catItems.forEach(g => {
+        const realI = data.gastosGenerales.indexOf(g);
+        rows += `<tr>
+          <td style="padding-left:20px">${g.fecha ? formatDate(g.fecha) : '—'}</td>
+          <td>${esc(g.nombre)}</td>
+          <td><span class="badge badge-orange" style="background:${getCatColor(g.categoria)}22;color:${getCatColor(g.categoria)}">${g.categoria}</span></td>
+          <td class="text-red fw-700">${fmt(g.monto)}</td>
+          <td>
+            <button class="btn btn-ghost btn-sm" onclick="editGastoG(${realI})">✏️</button>
+            <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deleteGastoG(${realI})">🗑️</button>
+          </td>
+        </tr>`;
+      });
+    });
+  } else {
+    rows = filtered.map(g => {
+      const realI = data.gastosGenerales.indexOf(g);
+      return `<tr>
+        <td>${g.fecha ? formatDate(g.fecha) : '—'}</td>
+        <td>${esc(g.nombre)}</td>
+        <td><span class="badge badge-orange" style="background:${getCatColor(g.categoria)}22;color:${getCatColor(g.categoria)}">${g.categoria}</span></td>
+        <td class="text-red fw-700">${fmt(g.monto)}</td>
+        <td>
+          <button class="btn btn-ghost btn-sm" onclick="editGastoG(${realI})">✏️</button>
+          <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deleteGastoG(${realI})">🗑️</button>
+        </td>
+      </tr>`;
+    }).join('');
+  }
 
+  document.getElementById('gastosg-tbody').innerHTML = rows;
   document.getElementById('gastosg-total').innerHTML = `
-    <td colspan="3"><strong>TOTAL ${currentGastosGFilter !== 'Todos' ? '(' + currentGastosGFilter + ')' : ''}</strong></td>
+    <td colspan="3"><strong>TOTAL ${!isTodos ? '(' + currentGastosGFilter + ')' : ''}</strong></td>
     <td><strong class="text-amber">${fmt(total)}</strong></td>
     <td></td>`;
 }
@@ -2542,7 +2581,7 @@ function deleteEmpleado(i) {
 // ─────────────────────────────────────────────────────
 // ARQUEO DE CAJA
 // ─────────────────────────────────────────────────────
-const ARS_DENOMS = [100000, 50000, 20000, 10000, 5000, 2000, 1000];
+const ARS_DENOMS = [20000, 10000, 2000, 1000];
 
 function toggleArqueo() {
   const btn  = document.getElementById('arqueo-toggle-btn');
