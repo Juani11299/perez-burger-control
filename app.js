@@ -1773,14 +1773,90 @@ function verDetalleHistorial(i) {
   const fc   = neta * ((c.pctFondoComun || 10) / 100);
   const egr  = (h.data.egresosGanancia || []).reduce((s, e) => s + e.monto, 0);
   const dist = neta - fc - egr;
-  const j    = dist * ((c.socio1Pct || 60) / 100);
-  const e    = dist * ((c.socio2Pct || 40) / 100);
+  const jPct = dist * ((c.socio1Pct || 60) / 100);
+  const ePct = dist * ((c.socio2Pct || 40) / 100);
   const adjJ = (h.data.adelantos || []).filter(a => a.persona==='juan').reduce((s,a) => s+a.monto, 0);
   const adjE = (h.data.adelantos || []).filter(a => a.persona==='emi').reduce((s,a) => s+a.monto, 0);
 
+  const sHead = (title, count) => `
+    <div style="display:flex;align-items:center;gap:10px;margin:22px 0 10px;padding-bottom:8px;border-bottom:2px solid var(--border)">
+      <span style="font-size:13px;font-weight:700;color:var(--text)">${title}</span>
+      ${count !== undefined ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--card2);color:var(--muted)">${count}</span>` : ''}
+    </div>`;
+
+  // Cierres del día
+  const ventas = [...(h.data.ventas || [])].sort((a, b) => (a.fecha > b.fecha ? 1 : -1));
+  const ventasHTML = ventas.length ? `
+    ${sHead('📋 Cierres del Día', ventas.length)}
+    <table class="wf-table">
+      <thead><tr>
+        <th>Día</th><th>Fecha</th><th style="text-align:right">Total</th><th style="text-align:right">Burgers</th>
+      </tr></thead>
+      <tbody>${ventas.map(v => `<tr>
+        <td>${v.dia||'—'}</td>
+        <td class="text-muted">${v.fecha||'—'}</td>
+        <td class="align-right text-green fw-700">${fmt(v.monto||0)}</td>
+        <td class="align-right">${v.burgers||v.productosDelDia?.burgers||'—'}</td>
+      </tr>`).join('')}</tbody>
+    </table>` : '';
+
+  // Gastos Generales
+  const gg = h.data.gastosGenerales || [];
+  const ggHTML = gg.length ? `
+    ${sHead('📦 Gastos Generales', fmt(b.compras||0))}
+    <table class="wf-table">
+      <thead><tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th style="text-align:right">Monto</th></tr></thead>
+      <tbody>${gg.map(g => `<tr>
+        <td class="text-muted">${g.fecha||'—'}</td>
+        <td>${esc(g.nombre)}</td>
+        <td><span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${getCatColor(g.categoria)}18;color:${getCatColor(g.categoria)}">${g.categoria}</span></td>
+        <td class="align-right text-red fw-700">${fmt(g.monto)}</td>
+      </tr>`).join('')}</tbody>
+    </table>` : '';
+
+  // Gastos Fijos
+  const gf = h.data.gastosFijosDetalle || [];
+  const gfHTML = gf.length ? `
+    ${sHead('🧾 Gastos Fijos', fmt(b.gastosFijos||0))}
+    <table class="wf-table">
+      <tbody>${gf.map(g => `<tr>
+        <td>${esc(g.nombre)}</td>
+        <td class="align-right text-red fw-700">${fmt(g.monto)}</td>
+      </tr>`).join('')}</tbody>
+    </table>` : '';
+
+  // Sueldos
+  const sueldos = h.data.sueldosDetalle || [];
+  const sueldosHTML = sueldos.length ? `
+    ${sHead('👤 Sueldos', fmt(b.sueldos||0))}
+    <table class="wf-table">
+      <tbody>${sueldos.map(emp => {
+        const tot = (emp.funciones||[]).reduce((s,f)=>s+(f.diasTrabajados||0)*(f.pagoPorDia||0),0);
+        return `<tr>
+          <td class="fw-700">${esc(emp.nombre)}</td>
+          <td class="text-muted" style="font-size:12px">${(emp.funciones||[]).map(f=>`${f.funcion}: ${f.diasTrabajados}d × ${fmt(f.pagoPorDia)}`).join(' · ')}</td>
+          <td class="align-right text-red fw-700">${fmt(tot)}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>` : '';
+
+  // Fondo Común
+  const fcMovs = h.data.fondoComun || [];
+  const fcMovsHTML = fcMovs.length ? `
+    ${sHead('🏦 Fondo Común', `Saldo: ${fmt(calcSaldoFC(fcMovs))}`)}
+    <table class="wf-table">
+      <tbody>${fcMovs.map(m => `<tr>
+        <td class="text-muted">${m.fecha||'—'}</td>
+        <td>${esc(m.descripcion||'')}</td>
+        <td><span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${m.tipo==='Ingreso'?'rgba(22,163,74,.12)':'rgba(200,16,46,.1)'};color:${m.tipo==='Ingreso'?'var(--green)':'var(--red)'}">${m.tipo}</span></td>
+        <td class="align-right fw-700" style="color:${m.tipo==='Ingreso'?'var(--green)':'var(--red)'}">${fmt(m.monto)}</td>
+      </tr>`).join('')}</tbody>
+    </table>` : '';
+
   document.getElementById('historial-detail-title').textContent = `📅 ${h.mesAnio.replace('_', ' ')}`;
   document.getElementById('historial-detail-body').innerHTML = `
-    <table class="wf-table" style="margin-bottom:16px">
+    ${sHead('📊 Resumen Financiero')}
+    <table class="wf-table" style="margin-bottom:8px">
       <tbody>
         <tr><td class="text-muted">💰 Ingresos</td><td class="align-right text-green fw-700">${fmt(b.ventas||0)}</td></tr>
         <tr><td class="text-muted">📦 Gastos Generales</td><td class="align-right text-red">− ${fmt(b.compras||0)}</td></tr>
@@ -1790,15 +1866,14 @@ function verDetalleHistorial(i) {
         <tr><td class="text-muted">🏦 Fondo Común (${c.pctFondoComun||10}%)</td><td class="align-right text-muted">− ${fmt(fc)}</td></tr>
         <tr><td class="text-muted">💸 Egresos de Ganancias</td><td class="align-right text-red">− ${fmt(egr)}</td></tr>
         <tr class="wf-sum"><td>🎯 A Distribuir</td><td class="align-right">${fmt(dist)}</td></tr>
-        <tr><td>${c.socio1Nombre||'Socio 1'} (${c.socio1Pct||60}%)</td><td class="align-right text-blue fw-700">${fmt(j - adjJ)}</td></tr>
-        <tr><td>${c.socio2Nombre||'Socio 2'} (${c.socio2Pct||40}%)</td><td class="align-right fw-700" style="color:#ec4899">${fmt(e - adjE)}</td></tr>
+        <tr><td>${c.socio1Nombre||'Socio 1'} (${c.socio1Pct||60}%)</td><td class="align-right text-blue fw-700">${fmt(jPct - adjJ)}</td></tr>
+        <tr><td>${c.socio2Nombre||'Socio 2'} (${c.socio2Pct||40}%)</td><td class="align-right fw-700" style="color:#ec4899">${fmt(ePct - adjE)}</td></tr>
       </tbody>
     </table>
-    <div style="font-size:12px;color:var(--muted)">
-      Días de venta: ${(h.data.ventas||[]).length} ·
-      Burgers: ${(h.data.ventas||[]).reduce((s,v)=>s+(v.burgers||0),0).toLocaleString('es-AR')} ·
-      Fondo Común acumulado: ${fmt(calcSaldoFC(h.data.fondoComun||[]))}
-    </div>`;
+    <div style="font-size:12px;color:var(--muted);margin-bottom:4px">
+      Días de venta: ${ventas.length} · Burgers totales: ${ventas.reduce((s,v)=>s+(v.burgers||v.productosDelDia?.burgers||0),0).toLocaleString('es-AR')}
+    </div>
+    ${ventasHTML}${ggHTML}${gfHTML}${sueldosHTML}${fcMovsHTML}`;
 
   openModal('modal-historial-detail');
 }
